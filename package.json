@@ -1,0 +1,22 @@
+{
+  "name": "llm-context-benchmark-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node viewer/server/index.mjs",
+    "start": "node viewer/server/index.mjs --production",
+    "test:viewer": "node --test viewer/server/*.test.mjs",
+    "build": "vite build viewer"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "chart.js": "latest",
+    "express": "latest",
+    "react": "latest",
+    "react-chartjs-2": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+# Use the Python and MLX layer shipped by the globally installed oMLX app.
+# Override OMLX_APP_PATH only when the app is installed outside /Applications.
+omlx_app_path="${OMLX_APP_PATH:-/Applications/oMLX.app}"
+resources_path="$omlx_app_path/Contents/Resources"
+project_path=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+python_path=""
+for candidate in "$resources_path"/Python/cpython-*/bin/python3; do
+    if [ -x "$candidate" ]; then
+        python_path="$candidate"
+        break
+    fi
+done
+
+mlx_packages_path=""
+for candidate in "$resources_path"/Python/framework-mlx-base/lib/python*/site-packages; do
+    if [ -d "$candidate" ]; then
+        mlx_packages_path="$candidate"
+        break
+    fi
+done
+
+if [ -z "$python_path" ] || [ -z "$mlx_packages_path" ]; then
+    echo "Could not find the installed oMLX runtime at: $omlx_app_path" >&2
+    echo "Install oMLX.app in /Applications or set OMLX_APP_PATH." >&2
+    exit 1
+fi
+
+if [ -n "${PYTHONPATH:-}" ]; then
+    export PYTHONPATH="$project_path/src:$mlx_packages_path:$resources_path:$PYTHONPATH"
+else
+    export PYTHONPATH="$project_path/src:$mlx_packages_path:$resources_path"
+fi
+export PYTHONNOUSERSITE=1
+
+exec "$python_path" -m llm_context_benchmark "$@"

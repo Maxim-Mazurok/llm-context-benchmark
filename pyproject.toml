@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-context-benchmark"
+version = "0.1.0"
+description = "Continuous growing-context benchmark for Apple Silicon LLM runtimes"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Max"}]
+
+[project.optional-dependencies]
+mlx = ["mlx-lm>=0.30,<0.32"]
+test = ["pytest>=8"]
+
+[project.scripts]
+llm-context-bench = "llm_context_benchmark.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

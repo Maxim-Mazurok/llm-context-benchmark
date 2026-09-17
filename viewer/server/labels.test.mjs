@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { legendLabelMode, seriesLabel } from "../src/labels.js";
+
+const runs = {
+  first: { modelName: "Model A", runAt: "2026-09-17T01:00:00" },
+  second: { modelName: "Model B", runAt: "2026-09-17T02:00:00" },
+  repeat: { modelName: "Model A", runAt: "2026-09-17T03:00:00" },
+};
+const speed = { label: "Prefill speed" };
+
+test("a single run uses metric-only legend labels", () => {
+  const series = [
+    { benchmarkId: "first", metric: "prefill_tps" },
+    { benchmarkId: "first", metric: "swap_growth_gib" },
+  ];
+  const mode = legendLabelMode(series, runs);
+  assert.equal(mode, "metric");
+  assert.equal(seriesLabel(runs.first, speed, mode), "Prefill speed");
+});
+
+test("distinct models omit run times", () => {
+  const mode = legendLabelMode(
+    [{ benchmarkId: "first" }, { benchmarkId: "second" }],
+    runs,
+  );
+  assert.equal(mode, "model");
+  assert.equal(seriesLabel(runs.first, speed, mode), "Model A · Prefill speed");
+});
+
+test("repeated models include run times", () => {
+  const mode = legendLabelMode(
+    [{ benchmarkId: "first" }, { benchmarkId: "repeat" }],
+    runs,
+  );
+  assert.equal(mode, "run");
+  assert.match(seriesLabel(runs.first, speed, mode), /^Model A · .+ · Prefill speed$/);
+});
