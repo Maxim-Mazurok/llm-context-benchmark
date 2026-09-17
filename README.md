@@ -14,6 +14,21 @@ Generated tokens remain in the context. Every result and chart therefore uses th
 
 The final sustained probe is guaranteed when the endpoint is known in advance, such as a declared model limit or `--max-context`. A sudden allocation failure, OS termination, or manual interruption cannot safely schedule an after-the-fact final probe.
 
+## Requirements and safety
+
+Real-model benchmarking targets Apple Silicon Macs and requires either an
+installed OMLX application or a standalone Python 3.11+ environment with MLX.
+Long-context runs intentionally consume substantial unified memory and may
+cause compression, swap activity, system slowdown, or model allocation
+failure. Save important work before starting a large run and choose an
+appropriate `--max-context` and `--swap-stop-gib` for the machine.
+
+The results viewer is intended for trusted networks. It listens on all network
+interfaces by default and has no authentication; reachable users can inspect
+local model/run metadata and start, stop, or resume benchmarks. Use
+`HOST=127.0.0.1 npm run dev` to keep it local, and never expose it directly to
+the public internet. See [SECURITY.md](SECURITY.md) for details.
+
 ## Quick start with installed OMLX
 
 The included launcher uses the Python, MLX, `mlx-lm`, Transformers, and psutil versions packaged inside the globally installed `/Applications/oMLX.app`. It does not require an OMLX source checkout or a separate project environment:
@@ -252,6 +267,11 @@ npm start
 
 The **Run benchmarks** panel can launch one or many installed OMLX models, choose raw, speculative, or both variants, override the MTP draft depth, stop the active model gracefully, and resume checkpointed runs. **Round-robin stages** runs every selected model to 8K, then every model to 16K, then 32K, and so on. With no final target it adds one last uncapped continuation to the model/runtime limit. **Finish each model** keeps the traditional one-model-at-a-time schedule. Intermediate phase results are written after every cycle and refresh in the browser while inference continues.
 
+Round-robin scheduling provides comparable intermediate results earlier, but
+it is slower overall: every later stage reloads that model and reconstructs
+its in-memory KV cache from the saved token sequence. Finish-each-model mode
+keeps one cache alive to the final target and avoids that repeated work.
+
 The opening ledger groups all available evidence by model. Each model row reports its maximum tested context, averaged resource measurements, capacity-run count, and useful-task observation count. Open a model to see one aggregate line per metric. Capacity values are arithmetic means only where runs share the same actual context coordinate; missing measurements are ignored rather than treated as zero. Switch to **Individual runs** when you need a specific dated result.
 
 Every chart uses the same comparison controls. Aggregate models appear first in the source selector, followed by individual runs grouped under their model, allowing you to:
@@ -273,16 +293,6 @@ This is why the default adapter runs in the model process rather than through OM
 
 If OMLX is installed somewhere other than `/Applications/oMLX.app`, set `OMLX_APP_PATH` to its `.app` path. The normal `omlx` shell command is a native CLI launcher and does not directly provide a general-purpose Python subcommand, which is why this project launcher selects the packaged runtime explicitly.
 
-## Runtime adapter interface
-
-A new adapter implements `load`, `make_input_tokens`, `append_and_decode`, `mlx_metrics`, `reset_peak_memory`, and `metadata` from `adapters/base.py`. The important contract is that `append_and_decode` extends one persistent cache and calls `on_prefill_complete` exactly when decode begins. The included `mock` adapter supports fast end-to-end testing:
-
-```bash
-./bin/llm-context-bench --adapter mock \
-  --max-context 3000 --chunk-tokens 1000 \
-  --short-decode-tokens 16 --long-decode-tokens 32 --long-decode-interval 2000
-```
-
 ## Measurement notes
 
 - Sampling happens in one lightweight thread using in-process macOS/psutil APIs and MLX counters; it never repeatedly launches `ps`, `vm_stat`, or `sysctl`.
@@ -293,9 +303,24 @@ A new adapter implements `load`, `make_input_tokens`, `append_and_decode`, `mlx_
 - The no-swap default tolerates 64 MiB of background noise. All swap criteria are growth relative to the post-load baseline, not total machine swap already in use.
 - Decode measurements are raw target-model autoregressive generation unless `--speculative` is supplied. Speculative metadata is always written so raw, external-draft, and native-MTP results remain distinguishable.
 
-## Tests
+## Sharing results
 
-```bash
-uv sync --extra test
-uv run pytest -q
-```
+The repository ignores `runs/`, but generated bundles can contain absolute
+model/output paths, platform details, model names, task or attempt identifiers,
+and error messages. Review and scrub artifacts before publishing them.
+
+## Contributing
+
+Development setup, architecture notes, test commands, and pull-request
+guidance live in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Development disclosure
+
+This project was fully vibe-coded through a human-directed, AI-assisted
+workflow using GPT-5.6 Sol and GitHub Copilot/Codex. The maintainer reviewed
+the behavior through automated tests, production builds, and browser-level
+validation, and remains responsible for the published code.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
