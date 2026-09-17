@@ -72,9 +72,11 @@ function RunnerPanel({ models, runner, onRunnerChange, onRefresh }) {
   );
 }
 
-function RunLedger({ benchmarks, models, runner, onRunnerChange, onSelect, onRefresh, refreshing }) {
+function RunLedger({ benchmarks, modelBenchmarks, models, runner, onRunnerChange, onSelect, onRefresh, refreshing }) {
   const [query, setQuery] = useState("");
-  const filtered = benchmarks.filter((run) =>
+  const [ledgerMode, setLedgerMode] = useState("models");
+  const entries = ledgerMode === "models" ? modelBenchmarks : benchmarks;
+  const filtered = entries.filter((run) =>
     `${run.modelName} ${run.runAt} ${run.stopReason}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
@@ -87,44 +89,53 @@ function RunLedger({ benchmarks, models, runner, onRunnerChange, onSelect, onRef
       <RunnerPanel models={models} runner={runner} onRunnerChange={onRunnerChange} onRefresh={onRefresh} />
       <div className="ledger-tools">
         <label className="search-field">
-          Find a benchmark
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Model, date, or stop reason" />
+          Find {ledgerMode === "models" ? "a model" : "a benchmark"}
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ledgerMode === "models" ? "Model name" : "Model, date, or stop reason"} />
         </label>
-        <button className="quiet-button" type="button" onClick={onRefresh} disabled={refreshing}>
-          {refreshing ? "Refreshing runs…" : "Refresh runs"}
-        </button>
+        <div className="ledger-actions">
+          <div className="ledger-mode" role="group" aria-label="Ledger view">
+            <button type="button" aria-pressed={ledgerMode === "models"} onClick={() => setLedgerMode("models")}>Models</button>
+            <button type="button" aria-pressed={ledgerMode === "runs"} onClick={() => setLedgerMode("runs")}>Individual runs</button>
+          </div>
+          <button className="quiet-button" type="button" onClick={onRefresh} disabled={refreshing}>
+            {refreshing ? "Refreshing runs…" : "Refresh runs"}
+          </button>
+        </div>
       </div>
-      <section className="ledger" aria-label="Benchmark runs">
+      <section className="ledger" aria-label={ledgerMode === "models" ? "Benchmarked models" : "Benchmark runs"}>
         <div className="ledger-header" aria-hidden="true">
-          <span>Model and local run time</span><span>Maximum context</span><span>Peak MLX</span><span>Swap growth</span><span>Result</span>
+          <span>{ledgerMode === "models" ? "Benchmarked model" : "Model and local run time"}</span><span>Maximum context</span><span>Peak MLX</span><span>Swap growth</span><span>{ledgerMode === "models" ? "Evidence" : "Result"}</span>
         </div>
         {filtered.map((run, index) => (
           <button className="ledger-row" style={{ "--i": Math.min(index, 8) }} type="button" key={run.id} onClick={() => onSelect(run.id)}>
-            <span className="run-identity"><strong>{run.modelName}</strong><small>{formatRunDate(run.runAt)}</small></span>
+            <span className="run-identity"><strong>{run.modelName}</strong><small>{run.kind === "model" ? `Latest evidence ${formatRunDate(run.runAt)}` : formatRunDate(run.runAt)}</small></span>
             <span data-label="Maximum context"><strong>{formatNumber(run.maxContextTokens)}</strong><small>tokens</small></span>
             <span data-label="Peak MLX"><strong>{formatNumber(run.peakMlxActiveGib, 2)}</strong><small>GiB active</small></span>
             <span data-label="Swap growth"><strong>{formatNumber(run.peakSwapGrowthGib, 2)}</strong><small>GiB</small></span>
-            <span data-label="Result"><strong className={`stop-reason status-${run.status}`}>{run.status === "running" ? "running now" : run.stopReason.replaceAll("_", " ")}</strong><small>{formatNumber(run.finalDecodeTps, 1)} tok/s final decode</small></span>
+            <span data-label={run.kind === "model" ? "Evidence" : "Result"}><strong className={`stop-reason status-${run.status}`}>{run.kind === "model" ? `${run.runCount} capacity run${run.runCount === 1 ? "" : "s"}` : run.status === "running" ? "running now" : run.stopReason.replaceAll("_", " ")}</strong><small>{run.kind === "model" ? `${run.observationCount} useful-task observation${run.observationCount === 1 ? "" : "s"}` : `${formatNumber(run.finalDecodeTps, 1)} tok/s final decode`}</small></span>
             <span className="row-arrow" aria-hidden="true">→</span>
           </button>
         ))}
-        {!filtered.length && <div className="empty-state">No matching completed runs. Try a model name or refresh the list.</div>}
+        {!filtered.length && <div className="empty-state">No matching {ledgerMode === "models" ? "benchmarked models" : "runs"}. Try another model name or refresh the list.</div>}
       </section>
     </main>
   );
 }
 
-function DetailView({ benchmark, benchmarks, metrics, details, ensureDetail, onBack, runner, onRunnerChange }) {
+function DetailView({ benchmark, benchmarks, modelBenchmarks, metrics, details, ensureDetail, onBack, runner, onRunnerChange }) {
   const defaultId = benchmark.id;
+  const aggregate = benchmark.kind === "model";
+  const hasCapacity = aggregate ? benchmark.runCount > 0 : benchmark.kind === "capacity-run";
+  const hasUsefulTasks = aggregate ? benchmark.observationCount > 0 : benchmark.kind === "useful-task-run";
   const [resumeTarget, setResumeTarget] = useState("");
   const [resumeError, setResumeError] = useState("");
   const resume = async () => { try { onRunnerChange(await resumeBenchmark(benchmark.id, Number(resumeTarget) || null)); setResumeError(""); } catch (error) { setResumeError(error.message); } };
   return (
     <main id="main-content" className="page-shell detail-page">
-      <button className="back-button" type="button" onClick={onBack}>← All benchmark runs</button>
+      <button className="back-button" type="button" onClick={onBack}>← All benchmarked models</button>
       <header className="detail-header">
         <div>
-          <div className="eyebrow">{formatRunDate(benchmark.runAt)}</div>
+          <div className="eyebrow">{aggregate ? "Averaged across all matching evidence" : formatRunDate(benchmark.runAt)}</div>
           <h1>{benchmark.modelName}</h1>
           <p className="model-path">{benchmark.model}</p>
         </div>
@@ -133,35 +144,35 @@ function DetailView({ benchmark, benchmarks, metrics, details, ensureDetail, onB
           <div><dt>Peak MLX active</dt><dd>{formatNumber(benchmark.peakMlxActiveGib, 2)} <small>GiB</small></dd></div>
           <div><dt>Peak total swap</dt><dd>{formatNumber(benchmark.peakSwapUsedGib, 2)} <small>GiB</small></dd></div>
           <div><dt>Peak swap growth</dt><dd>{formatNumber(benchmark.peakSwapGrowthGib, 2)} <small>GiB</small></dd></div>
-          <div><dt>Worst pressure</dt><dd className="reason-value">{benchmark.worstMemoryPressure || "—"}</dd></div>
-          <div><dt>Stopped</dt><dd className="reason-value">{benchmark.stopReason.replaceAll("_", " ")}</dd></div>
+          <div><dt>{aggregate ? "Capacity runs" : "Worst pressure"}</dt><dd className="reason-value">{aggregate ? formatNumber(benchmark.runCount) : benchmark.worstMemoryPressure || "—"}</dd></div>
+          <div><dt>{aggregate ? "Useful-task observations" : "Stopped"}</dt><dd className="reason-value">{aggregate ? formatNumber(benchmark.observationCount) : benchmark.stopReason.replaceAll("_", " ")}</dd></div>
         </dl>
       </header>
       {benchmark.resumable && !["running", "stopping"].includes(runner?.status) && <section className="resume-strip"><span><strong>Continue this cache</strong><small>The model reloads and reconstructs the last completed context checkpoint.</small></span><label>Final target <span className="optional">optional</span><input type="number" min={benchmark.maxContextTokens + 1} value={resumeTarget} placeholder="Model/runtime limit" onChange={(event) => setResumeTarget(event.target.value)} /></label><button type="button" onClick={resume}>Resume benchmark</button>{resumeError && <small className="runner-message">{resumeError}</small>}</section>}
       <aside className="measurement-note">
-        <strong>Period-local measurements.</strong> Each prefill point measures only that append phase—not elapsed time since the run began. Peak swap retains brief spikes that cycle-end readings miss. Memory pressure can oscillate independently as macOS compresses, evicts, pages, and reclaims memory.
+        <strong>{aggregate ? "Model aggregate." : "Period-local measurements."}</strong> {aggregate ? "Capacity values are averaged only where runs share the same actual context. Useful tasks remain independent requests and appear in their own chart." : "Each prefill point measures only that append phase—not elapsed time since the run began. Peak swap retains brief spikes that cycle-end readings miss. Memory pressure can oscillate independently as macOS compresses, evicts, pages, and reclaims memory."}
         {benchmark.measurement?.memory && <small>{benchmark.measurement.memory}</small>}
       </aside>
       <div className="chart-stack">
-        <MetricChart
+        {hasCapacity && <MetricChart
           key={`${defaultId}-prefill`}
           title="Prefill scaling"
           subtitle="Processing speed for each individual context append"
-          benchmarks={benchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
           initialSeries={[{ benchmarkId: defaultId, metric: "prefill_tps" }]}
-        />
-        <MetricChart
+        />}
+        {hasCapacity && <MetricChart
           key={`${defaultId}-decode`}
           title="Decode scaling"
           subtitle="One continuous line; sustained probes use larger points"
-          benchmarks={benchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
           initialSeries={[{ benchmarkId: defaultId, metric: "decode_tps" }]}
-        />
-        <MetricChart
+        />}
+        {hasCapacity && <MetricChart
           key={`${defaultId}-memory`}
           title="Memory behavior"
           subtitle="Process-specific MLX allocation beside system pressure indicators"
-          benchmarks={benchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
           initialSeries={[
             { benchmarkId: defaultId, metric: "mlx_active_gib" },
             { benchmarkId: defaultId, metric: "system_available_gib" },
@@ -169,7 +180,17 @@ function DetailView({ benchmark, benchmarks, metrics, details, ensureDetail, onB
             { benchmarkId: defaultId, metric: "swap_total_gib" },
             { benchmarkId: defaultId, metric: "swap_growth_gib" },
           ]}
-        />
+        />}
+        {hasUsefulTasks && <MetricChart
+          key={`${defaultId}-useful-tasks`}
+          title="Useful-task behavior"
+          subtitle="Independent task requests by real prompt length"
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          initialSeries={[
+            { benchmarkId: defaultId, metric: "task_generation_tps" },
+            { benchmarkId: defaultId, metric: "task_score" },
+          ]}
+        />}
       </div>
     </main>
   );
@@ -177,6 +198,7 @@ function DetailView({ benchmark, benchmarks, metrics, details, ensureDetail, onB
 
 export default function App() {
   const [benchmarks, setBenchmarks] = useState([]);
+  const [modelBenchmarks, setModelBenchmarks] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [details, setDetails] = useState({});
   const [selectedId, setSelectedId] = useState(() => decodeURIComponent(location.hash.replace("#run=", "")) || null);
@@ -190,6 +212,7 @@ export default function App() {
     try {
       const payload = await fetchBenchmarks();
       setBenchmarks(payload.benchmarks);
+      setModelBenchmarks(payload.modelBenchmarks || []);
       setMetrics(payload.metrics);
       setError("");
     } catch (requestError) {
@@ -235,8 +258,10 @@ export default function App() {
   useEffect(() => { if (selectedId) ensureDetail(selectedId); }, [ensureDetail, selectedId]);
 
   const selected = useMemo(
-    () => details[selectedId] || benchmarks.find((benchmark) => benchmark.id === selectedId),
-    [benchmarks, details, selectedId],
+    () => details[selectedId]
+      || modelBenchmarks.find((benchmark) => benchmark.id === selectedId)
+      || benchmarks.find((benchmark) => benchmark.id === selectedId),
+    [benchmarks, details, modelBenchmarks, selectedId],
   );
 
   const selectRun = (id) => { location.hash = `run=${encodeURIComponent(id)}`; };
@@ -249,7 +274,7 @@ export default function App() {
     return <main className="page-shell loading-state"><div className="eyebrow">Indexing local runs</div><h1>Building the atlas…</h1></main>;
   }
   if (selectedId && selected) {
-    return <DetailView benchmark={selected} benchmarks={benchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail} onBack={showList} runner={runner} onRunnerChange={setRunner} />;
+    return <DetailView benchmark={selected} benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail} onBack={showList} runner={runner} onRunnerChange={setRunner} />;
   }
-  return <RunLedger benchmarks={benchmarks} models={models} runner={runner} onRunnerChange={setRunner} onSelect={selectRun} onRefresh={refresh} refreshing={refreshing} />;
+  return <RunLedger benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} models={models} runner={runner} onRunnerChange={setRunner} onSelect={selectRun} onRefresh={refresh} refreshing={refreshing} />;
 }

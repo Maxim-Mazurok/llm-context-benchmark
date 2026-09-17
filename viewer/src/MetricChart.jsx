@@ -22,6 +22,7 @@ function axisId(unit) {
 }
 
 function contextForMetric(point, metric) {
+  if (metric.startsWith("task_")) return point.task_prompt_tokens;
   if (metric === "prefill_tps" || metric === "prefill_duration_s") {
     return point.prefill_context_tokens;
   }
@@ -32,6 +33,7 @@ export default function MetricChart({
   title,
   subtitle,
   benchmarks,
+  modelBenchmarks,
   metrics,
   details,
   ensureDetail,
@@ -50,8 +52,10 @@ export default function MetricChart({
   }, [ensureDetail, series]);
 
   const runIndex = useMemo(
-    () => Object.fromEntries(benchmarks.map((run) => [run.id, details[run.id] || run])),
-    [benchmarks, details],
+    () => Object.fromEntries([...modelBenchmarks, ...benchmarks].map(
+      (run) => [run.id, details[run.id] || run],
+    )),
+    [benchmarks, details, modelBenchmarks],
   );
   const labelMode = useMemo(() => legendLabelMode(series, runIndex), [runIndex, series]);
 
@@ -144,7 +148,7 @@ export default function MetricChart({
     setSeries((current) => [
       ...current,
       {
-        benchmarkId: current[0]?.benchmarkId || benchmarks[0]?.id,
+        benchmarkId: current[0]?.benchmarkId || modelBenchmarks[0]?.id || benchmarks[0]?.id,
         metric: current[0]?.metric || "decode_tps",
         color: COLORS[current.length % COLORS.length],
       },
@@ -190,11 +194,26 @@ export default function MetricChart({
                     value={item.benchmarkId}
                     onChange={(event) => updateSeries(index, { benchmarkId: event.target.value })}
                   >
-                    {benchmarks.map((benchmark) => (
-                      <option key={benchmark.id} value={benchmark.id}>
-                        {benchmark.modelName} · {new Date(benchmark.runAt).toLocaleString()}
-                      </option>
-                    ))}
+                    <optgroup label="Models · averaged">
+                      {modelBenchmarks.map((benchmark) => (
+                        <option key={benchmark.id} value={benchmark.id}>
+                          {benchmark.modelName} · {benchmark.runCount} capacity run{benchmark.runCount === 1 ? "" : "s"}
+                        </option>
+                      ))}
+                    </optgroup>
+                    {modelBenchmarks.map((modelBenchmark) => {
+                      const modelRuns = benchmarks.filter(
+                        (benchmark) => benchmark.modelName === modelBenchmark.modelName,
+                      );
+                      if (!modelRuns.length) return null;
+                      return <optgroup key={modelBenchmark.id} label={`${modelBenchmark.modelName} · individual runs`}>
+                        {modelRuns.map((benchmark) => (
+                          <option key={benchmark.id} value={benchmark.id}>
+                            {benchmark.kind === "useful-task-run" ? "Useful tasks" : "Capacity"} · {new Date(benchmark.runAt).toLocaleString()}
+                          </option>
+                        ))}
+                      </optgroup>;
+                    })}
                   </select>
                 </label>
                 <label>

@@ -7,6 +7,8 @@ const runs = {
   first: { modelName: "Model A", runAt: "2026-09-17T01:00:00" },
   second: { modelName: "Model B", runAt: "2026-09-17T02:00:00" },
   repeat: { modelName: "Model A", runAt: "2026-09-17T03:00:00" },
+  modelA: { kind: "model", modelName: "Model A", runAt: "2026-09-17T04:00:00" },
+  modelB: { kind: "model", modelName: "Model B", runAt: "2026-09-17T05:00:00" },
 };
 const speed = { label: "Prefill speed" };
 
@@ -36,4 +38,13 @@ test("repeated models include run times", () => {
   );
   assert.equal(mode, "run");
   assert.match(seriesLabel(runs.first, speed, mode), /^Model A · .+ · Prefill speed$/);
+});
+
+test("aggregate models never include evidence timestamps", () => {
+  const mode = legendLabelMode(
+    [{ benchmarkId: "modelA" }, { benchmarkId: "modelB" }],
+    runs,
+  );
+  assert.equal(mode, "model");
+  assert.equal(seriesLabel(runs.modelA, speed, mode), "Model A · Prefill speed");
 });

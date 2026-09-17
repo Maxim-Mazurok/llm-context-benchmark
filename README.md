@@ -252,12 +252,16 @@ npm start
 
 The **Run benchmarks** panel can launch one or many installed OMLX models, choose raw, speculative, or both variants, override the MTP draft depth, stop the active model gracefully, and resume checkpointed runs. **Round-robin stages** runs every selected model to 8K, then every model to 16K, then 32K, and so on. With no final target it adds one last uncapped continuation to the model/runtime limit. **Finish each model** keeps the traditional one-model-at-a-time schedule. Intermediate phase results are written after every cycle and refresh in the browser while inference continues.
 
-The opening ledger identifies every benchmark by model and the run's local date/time, with its maximum context, final decode rate, peak MLX allocation, swap growth, and stop reason. Open a run for detailed charts. Every chart uses the same comparison controls, allowing you to:
+The opening ledger groups all available evidence by model. Each model row reports its maximum tested context, averaged resource measurements, capacity-run count, and useful-task observation count. Open a model to see one aggregate line per metric. Capacity values are arithmetic means only where runs share the same actual context coordinate; missing measurements are ignored rather than treated as zero. Switch to **Individual runs** when you need a specific dated result.
+
+Every chart uses the same comparison controls. Aggregate models appear first in the source selector, followed by individual runs grouped under their model, allowing you to:
 
 - overlay a metric from several models or runs;
 - overlay different metrics from one run, with separate unit axes where needed;
 - remap the horizontal axis to another metric, such as swap growth versus prefill speed;
 - add or remove series without leaving the run detail page.
+
+Imported useful-task observations appear on a separate model chart and are averaged only at matching real prompt lengths. They are never merged into continuously growing persistent-cache capacity curves.
 
 Short and sustained decode probes share one decode line. Sustained probes use larger dots. Prefill points are the rate of each individual append phase—not a cumulative average from the beginning of the run—so local slowdowns or recoveries remain visible.
 

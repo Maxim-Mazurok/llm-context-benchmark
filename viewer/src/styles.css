@@ -90,6 +90,11 @@ h1 {
   gap: var(--space-lg);
   padding-block: var(--space-xl);
 }
+.ledger-actions { display: flex; align-items: center; gap: var(--space-md); }
+.ledger-mode { display: flex; border: 0.0625rem solid var(--ink); }
+.ledger-mode button { min-height: 2.75rem; border: 0; background: transparent; padding: 0.55rem 0.8rem; cursor: pointer; }
+.ledger-mode button + button { border-left: 0.0625rem solid var(--ink); }
+.ledger-mode button[aria-pressed="true"] { background: var(--ink); color: var(--sheet); }
 .runner-panel { margin: clamp(1.5rem, 4vw, 3rem) 0 0; border-block: 0.0625rem solid var(--ink); }
 .runner-panel.is-active { background: oklch(92% 0.035 85); }
 .runner-summary { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 1rem; border: 0; background: transparent; padding: 1rem 0; text-align: left; cursor: pointer; }
@@ -305,7 +310,8 @@ input[type="text"], .search-field input, select {
   .page-shell { padding-inline: max(0.9rem, env(safe-area-inset-left)); }
   .masthead { padding-top: 4rem; }
   .ledger-tools { display: grid; }
-  .ledger-tools .quiet-button { justify-self: start; }
+  .ledger-actions { align-items: stretch; flex-direction: column; }
+  .ledger-tools .quiet-button { align-self: start; }
   .ledger-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); padding: 1.1rem 2rem 1.1rem 0; }
   .ledger-row .run-identity { grid-column: 1 / -1; }
   .ledger-row > span:nth-child(4) { display: block; }

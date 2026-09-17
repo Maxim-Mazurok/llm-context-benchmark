@@ -20,6 +20,14 @@ export const METRICS = {
   cumulative_input_tokens: { label: "Cumulative input", unit: "tokens", group: "Context" },
   cumulative_generated_tokens: { label: "Cumulative generated", unit: "tokens", group: "Context" },
   memory_pressure: { label: "Memory pressure", unit: "level", group: "Memory" },
+  task_prompt_tokens: { label: "Useful-task prompt", unit: "tokens", group: "Useful tasks" },
+  task_generation_tps: { label: "Useful-task generation speed", unit: "tok/s", group: "Useful tasks" },
+  task_prompt_tps: { label: "Useful-task prompt speed", unit: "tok/s", group: "Useful tasks" },
+  task_ttft_s: { label: "Useful-task TTFT", unit: "seconds", group: "Useful tasks" },
+  task_total_time_s: { label: "Useful-task total time", unit: "seconds", group: "Useful tasks" },
+  task_score: { label: "Useful-task score", unit: "score", group: "Useful tasks" },
+  task_mlx_active_gib: { label: "Useful-task MLX active peak", unit: "GiB", group: "Useful tasks" },
+  task_footprint_gib: { label: "Useful-task footprint peak", unit: "GiB", group: "Useful tasks" },
 };
 
 async function readJson(file, fallback = null) {
@@ -77,6 +85,7 @@ function baseSummary(id, summary, metadata, phases, mtime, state = {}) {
   const finalDecode = decodes.at(-1);
   return {
     id,
+    kind: "capacity-run",
     model,
     modelName: benchmarkName(model, metadata),
     runAt: runTime.iso,
@@ -101,6 +110,99 @@ function baseSummary(id, summary, metadata, phases, mtime, state = {}) {
   };
 }
 
+function usefulTaskSummary(id, summary, observations, mtime) {
+  const model = summary?.models?.length === 1
+    ? summary.models[0]
+    : observations[0]?.model || "Mixed models";
+  const runAt = summary?.created_at ? new Date(summary.created_at) : mtime;
+  return {
+    id,
+    kind: "useful-task-run",
+    model,
+    modelName: modelName(model),
+    runAt: runAt.toISOString(),
+    runAtEpoch: runAt.getTime(),
+    maxContextTokens: Number(summary?.max_prompt_tokens || 0),
+    practicalContextTokens: null,
+    hardLimitTokens: null,
+    stopReason: "useful_tasks_imported",
+    status: "completed",
+    resumable: false,
+    baselineDecodeTps: null,
+    finalDecodeTps: null,
+    peakMlxActiveGib: bytesToGib(maxNumber(
+      observations.map((observation) => observation.mlx_active_peak_bytes),
+    )),
+    peakSwapGrowthGib: null,
+    peakSwapUsedGib: null,
+    swapoutGib: null,
+    worstMemoryPressure: null,
+    phaseCount: 0,
+    observationCount: Number(summary?.observation_count || observations.length),
+  };
+}
+
+function modelAggregateId(modelDisplayName) {
+  return `model-${Buffer.from(modelDisplayName).toString("base64url")}`;
+}
+
+function mean(values) {
+  const finite = values
+    .filter((value) => value != null && value !== "" && Number.isFinite(Number(value)))
+    .map(Number);
+  return finite.length
+    ? finite.reduce((total, value) => total + value, 0) / finite.length
+    : null;
+}
+
+export function buildModelBenchmarks(benchmarks) {
+  const groups = new Map();
+  for (const benchmark of benchmarks) {
+    const key = benchmark.modelName;
+    const group = groups.get(key) || [];
+    group.push(benchmark);
+    groups.set(key, group);
+  }
+  return [...groups.entries()].map(([modelDisplayName, runs]) => {
+    const latest = runs.reduce((current, run) =>
+      run.runAtEpoch > current.runAtEpoch ? run : current,
+    );
+    const capacityRuns = runs.filter((run) => run.kind === "capacity-run");
+    const usefulTaskRuns = runs.filter((run) => run.kind === "useful-task-run");
+    return {
+      id: modelAggregateId(modelDisplayName),
+      kind: "model",
+      model: latest.model,
+      modelName: modelDisplayName,
+      runAt: latest.runAt,
+      runAtEpoch: latest.runAtEpoch,
+      maxContextTokens: maxNumber(runs.map((run) => run.maxContextTokens)) || 0,
+      practicalContextTokens: mean(capacityRuns.map((run) => run.practicalContextTokens)),
+      hardLimitTokens: maxNumber(capacityRuns.map((run) => run.hardLimitTokens)),
+      stopReason: "aggregate",
+      status: runs.some((run) => ["running", "stopping"].includes(run.status))
+        ? "running"
+        : "completed",
+      resumable: false,
+      baselineDecodeTps: mean(capacityRuns.map((run) => run.baselineDecodeTps)),
+      finalDecodeTps: mean(capacityRuns.map((run) => run.finalDecodeTps)),
+      peakMlxActiveGib: mean(runs.map((run) => run.peakMlxActiveGib)),
+      peakSwapGrowthGib: mean(capacityRuns.map((run) => run.peakSwapGrowthGib)),
+      peakSwapUsedGib: mean(capacityRuns.map((run) => run.peakSwapUsedGib)),
+      swapoutGib: mean(capacityRuns.map((run) => run.swapoutGib)),
+      worstMemoryPressure: null,
+      phaseCount: capacityRuns.reduce((total, run) => total + run.phaseCount, 0),
+      runCount: capacityRuns.length,
+      usefulTaskRunCount: usefulTaskRuns.length,
+      observationCount: usefulTaskRuns.reduce(
+        (total, run) => total + (run.observationCount || 0),
+        0,
+      ),
+      sourceIds: runs.map((run) => run.id),
+    };
+  }).sort((left, right) => left.modelName.localeCompare(right.modelName));
+}
+
 export async function listBenchmarks(runsDir) {
   let entries = [];
   try {
@@ -111,18 +213,138 @@ export async function listBenchmarks(runsDir) {
   const benchmarks = await Promise.all(
     entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
       const directory = path.join(runsDir, entry.name);
-      const [summary, metadata, phases, state, info] = await Promise.all([
+      const [summary, metadata, phases, state, usefulSummary, observations, info] = await Promise.all([
         readJson(path.join(directory, "summary.json")),
         readJson(path.join(directory, "run-metadata.json"), {}),
         readJson(path.join(directory, "phases.json"), []),
         readJson(path.join(directory, "run-state.json"), {}),
+        readJson(path.join(directory, "useful-task-summary.json")),
+        readJson(path.join(directory, "useful-tasks.json"), []),
         stat(directory),
       ]);
+      if (usefulSummary) {
+        return usefulTaskSummary(entry.name, usefulSummary, observations, info.mtime);
+      }
       if (!summary && !state?.status) return null;
       return baseSummary(entry.name, summary || {}, metadata, phases, info.mtime, state);
     }),
   );
   return benchmarks.filter(Boolean).sort((a, b) => b.runAtEpoch - a.runAtEpoch);
+}
+
+function usefulTaskPoints(observations) {
+  return observations.map((observation, index) => ({
+    cycle: index + 1,
+    point_kind: "useful-task",
+    context_tokens: observation.prompt_tokens,
+    task_prompt_tokens: observation.prompt_tokens,
+    task_generation_tps: observation.generation_tokens_per_second,
+    task_prompt_tps: observation.prompt_tokens_per_second,
+    task_ttft_s: observation.time_to_first_token_seconds,
+    task_total_time_s: observation.total_time_seconds ?? observation.request_duration_seconds,
+    task_score: observation.score,
+    task_mlx_active_gib: bytesToGib(observation.mlx_active_peak_bytes),
+    task_footprint_gib: bytesToGib(observation.physical_footprint_peak_bytes),
+    task_id: observation.task_id,
+    attempt_id: observation.attempt_id,
+    sample_count: 1,
+  }));
+}
+
+function averagePointGroup(points) {
+  const numericKeys = new Set(points.flatMap((point) =>
+    Object.entries(point)
+      .filter(([, value]) => Number.isFinite(Number(value)))
+      .map(([key]) => key),
+  ));
+  const averaged = {};
+  for (const key of numericKeys) {
+    averaged[key] = mean(points.map((point) => point[key]));
+  }
+  return {
+    ...averaged,
+    point_kind: points[0].point_kind,
+    decode_kind: points[0].decode_kind,
+    sample_count: points.length,
+  };
+}
+
+function capacityMeasurementPoints(point) {
+  const prefillContextTokens = point.prefill_context_tokens ?? point.context_tokens;
+  const decodeContextTokens = point.decode_context_tokens ?? point.context_tokens;
+  return [
+    {
+      point_kind: "capacity-prefill",
+      context_tokens: prefillContextTokens,
+      prefill_context_tokens: prefillContextTokens,
+      prefill_tps: point.prefill_tps,
+      prefill_duration_s: point.prefill_duration_s,
+      cycle: point.cycle,
+    },
+    {
+      point_kind: "capacity-decode",
+      context_tokens: decodeContextTokens,
+      decode_context_tokens: decodeContextTokens,
+      decode_tps: point.decode_tps,
+      decode_duration_s: point.decode_duration_s,
+      decode_kind: point.decode_kind,
+      cycle: point.cycle,
+    },
+    {
+      ...point,
+      point_kind: "capacity-memory",
+      prefill_tps: null,
+      prefill_duration_s: null,
+      decode_tps: null,
+      decode_duration_s: null,
+    },
+  ];
+}
+
+export function aggregateBenchmarkDetails(modelBenchmark, details) {
+  const groupedPoints = new Map();
+  for (const detail of details) {
+    for (const point of detail.points || []) {
+      const measurementPoints = point.point_kind === "useful-task"
+        ? [point]
+        : capacityMeasurementPoints(point);
+      for (const measurementPoint of measurementPoints) {
+        const pointKind = measurementPoint.point_kind;
+      const context = pointKind === "useful-task"
+          ? measurementPoint.task_prompt_tokens
+          : measurementPoint.context_tokens;
+      if (!Number.isFinite(Number(context))) continue;
+        const decodeKind = pointKind === "capacity-decode"
+          ? measurementPoint.decode_kind
+          : "";
+        const key = `${pointKind}:${context}:${decodeKind}`;
+      const group = groupedPoints.get(key) || [];
+        group.push(measurementPoint);
+      groupedPoints.set(key, group);
+      }
+    }
+  }
+  const points = [...groupedPoints.values()]
+    .map(averagePointGroup)
+    .sort((left, right) => Number(left.context_tokens) - Number(right.context_tokens));
+  return {
+    ...modelBenchmark,
+    points,
+    metrics: METRICS,
+    summary: {
+      source_count: details.length,
+      capacity_run_count: modelBenchmark.runCount,
+      useful_task_run_count: modelBenchmark.usefulTaskRunCount,
+      useful_task_observation_count: modelBenchmark.observationCount,
+    },
+    metadata: { aggregate: true, source_ids: modelBenchmark.sourceIds },
+    measurement: {
+      prefill: "Values at matching actual contexts are arithmetic means across capacity runs.",
+      decode: "Values at matching actual contexts are arithmetic means across capacity runs.",
+      memory: "Memory values at matching contexts are arithmetic means across source runs.",
+      usefulTasks: "Useful-task values at matching prompt lengths are arithmetic means across imported observations.",
+    },
+  };
 }
 
 async function readSamples(directory) {
@@ -190,7 +412,7 @@ export function buildCyclePoints(phases, samples, initialSwap = 0) {
   return points;
 }
 
-export async function getBenchmark(runsDir, id) {
+async function getIndividualBenchmark(runsDir, id) {
   if (!id || path.basename(id) !== id) return null;
   const directory = path.join(runsDir, id);
   const [summary, metadata, phases, state, info] = await Promise.all([
@@ -200,7 +422,24 @@ export async function getBenchmark(runsDir, id) {
     readJson(path.join(directory, "run-state.json"), {}),
     stat(directory).catch(() => null),
   ]);
-  if (!summary || !info) return null;
+  if (!info) return null;
+  if (!summary) {
+    const [usefulSummary, observations] = await Promise.all([
+      readJson(path.join(directory, "useful-task-summary.json")),
+      readJson(path.join(directory, "useful-tasks.json"), []),
+    ]);
+    if (!usefulSummary) return null;
+    return {
+      ...usefulTaskSummary(id, usefulSummary, observations, info.mtime),
+      summary: usefulSummary,
+      metadata: { useful_tasks: true },
+      points: usefulTaskPoints(observations),
+      metrics: METRICS,
+      measurement: {
+        usefulTasks: "Each point is one imported independent useful-task request.",
+      },
+    };
+  }
   const samples = phases.some((phase) => phase.system_available_min_bytes == null)
     ? await readSamples(directory)
     : [];
@@ -227,4 +466,18 @@ export async function getBenchmark(runsDir, id) {
         : "Swap growth uses the highest sampled value since model load; swap written is cumulative paging traffic during each phase.",
     },
   };
+}
+
+export async function getBenchmark(runsDir, id) {
+  if (!id || path.basename(id) !== id) return null;
+  if (!id.startsWith("model-")) return getIndividualBenchmark(runsDir, id);
+  const benchmarks = await listBenchmarks(runsDir);
+  const modelBenchmark = buildModelBenchmarks(benchmarks).find(
+    (benchmark) => benchmark.id === id,
+  );
+  if (!modelBenchmark) return null;
+  const details = (await Promise.all(
+    modelBenchmark.sourceIds.map((sourceId) => getIndividualBenchmark(runsDir, sourceId)),
+  )).filter(Boolean);
+  return aggregateBenchmarkDetails(modelBenchmark, details);
 }

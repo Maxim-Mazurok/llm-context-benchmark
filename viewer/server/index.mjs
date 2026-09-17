@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import express from "express";
 
-import { getBenchmark, listBenchmarks, METRICS } from "./data.mjs";
+import { buildModelBenchmarks, getBenchmark, listBenchmarks, METRICS } from "./data.mjs";
 import { RunManager } from "./run-manager.mjs";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
@@ -51,7 +51,12 @@ app.post("/api/benchmarks/:id/resume", async (request, response, next) => {
 
 app.get("/api/benchmarks", async (_request, response, next) => {
   try {
-    response.json({ benchmarks: await listBenchmarks(runsDir), metrics: METRICS });
+    const benchmarks = await listBenchmarks(runsDir);
+    response.json({
+      benchmarks,
+      modelBenchmarks: buildModelBenchmarks(benchmarks),
+      metrics: METRICS,
+    });
   } catch (error) {
     next(error);
   }
