@@ -2,9 +2,14 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately to `maxim@mazurok.com`. Include a
-concise reproduction, affected version or commit, and the potential impact.
-Please do not open a public issue for an unpatched vulnerability.
+Open a [GitHub issue](https://github.com/Maxim-Mazurok/llm-context-benchmark/issues)
+with a concise reproduction, the affected version or commit, and the potential
+impact. Security reports are handled through the same public issue tracker as
+other bugs.
+
+Do not include credentials, access tokens, private model data, personal
+information, or other secrets in an issue. Revoke any credential immediately
+if it has already been exposed.
 
 ## Viewer network model
 
