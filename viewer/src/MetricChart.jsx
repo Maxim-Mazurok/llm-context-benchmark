@@ -11,22 +11,22 @@ import {
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 
+import { chartPoint } from "./chart-data.js";
 import { legendLabelMode, seriesLabel } from "./labels.js";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
-const COLORS = ["#b74228", "#254b76", "#2f766f", "#9b6b00", "#8f3f65", "#684f8e"];
+const COLORS = [
+  "#b74228", "#254b76", "#2f766f", "#9b6b00", "#8f3f65", "#684f8e",
+  "#58712c", "#a64d68", "#31708e", "#7b5427", "#5061a8", "#9a5638",
+];
+
+export function chartColor(index) {
+  return COLORS[index % COLORS.length];
+}
 
 function axisId(unit) {
   return `y_${unit.replace(/[^a-z0-9]/gi, "_")}`;
-}
-
-function contextForMetric(point, metric) {
-  if (metric.startsWith("task_")) return point.task_prompt_tokens;
-  if (metric === "prefill_tps" || metric === "prefill_duration_s") {
-    return point.prefill_context_tokens;
-  }
-  return point.decode_context_tokens ?? point.context_tokens;
 }
 
 export default function MetricChart({
@@ -38,18 +38,21 @@ export default function MetricChart({
   details,
   ensureDetail,
   initialSeries,
+  seriesOverride = null,
+  editable = true,
 }) {
   const [xMetric, setXMetric] = useState("context_tokens");
   const [series, setSeries] = useState(
     initialSeries.map((item, index) => ({ ...item, color: COLORS[index % COLORS.length] })),
   );
   const [editorOpen, setEditorOpen] = useState(false);
+  const activeSeries = seriesOverride || series;
 
   useEffect(() => {
-    for (const benchmarkId of new Set(series.map((item) => item.benchmarkId))) {
+    for (const benchmarkId of new Set(activeSeries.map((item) => item.benchmarkId))) {
       ensureDetail(benchmarkId);
     }
-  }, [ensureDetail, series]);
+  }, [activeSeries, ensureDetail]);
 
   const runIndex = useMemo(
     () => Object.fromEntries([...modelBenchmarks, ...benchmarks].map(
@@ -57,21 +60,17 @@ export default function MetricChart({
     )),
     [benchmarks, details, modelBenchmarks],
   );
-  const labelMode = useMemo(() => legendLabelMode(series, runIndex), [runIndex, series]);
+  const labelMode = useMemo(() => legendLabelMode(activeSeries, runIndex), [activeSeries, runIndex]);
 
   const chart = useMemo(() => {
     const datasets = [];
-    for (const item of series) {
+    for (const item of activeSeries) {
       const run = details[item.benchmarkId];
       const metric = metrics[item.metric];
       if (!run || !metric) continue;
       const points = run.points
-        .map((point) => {
-          const x = xMetric === "context_tokens" ? contextForMetric(point, item.metric) : point[xMetric];
-          const y = point[item.metric];
-          return { x: Number(x), y: Number(y), cycle: point.cycle, decodeKind: point.decode_kind };
-        })
-        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+        .map((point) => chartPoint(point, item.metric, xMetric))
+        .filter(Boolean);
       datasets.push({
         label: seriesLabel(run, metric, labelMode),
         data: points,
@@ -91,10 +90,10 @@ export default function MetricChart({
       });
     }
     return { datasets };
-  }, [details, labelMode, metrics, series, xMetric]);
+  }, [activeSeries, details, labelMode, metrics, xMetric]);
 
   const options = useMemo(() => {
-    const units = [...new Set(series.map((item) => metrics[item.metric]?.unit).filter(Boolean))];
+    const units = [...new Set(activeSeries.map((item) => metrics[item.metric]?.unit).filter(Boolean))];
     const scales = {
       x: {
         type: "linear",
@@ -138,7 +137,7 @@ export default function MetricChart({
       },
       scales,
     };
-  }, [metrics, series, xMetric]);
+  }, [activeSeries, metrics, xMetric]);
 
   const updateSeries = (index, patch) => {
     setSeries((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
@@ -150,7 +149,7 @@ export default function MetricChart({
       {
         benchmarkId: current[0]?.benchmarkId || modelBenchmarks[0]?.id || benchmarks[0]?.id,
         metric: current[0]?.metric || "decode_tps",
-        color: COLORS[current.length % COLORS.length],
+        color: chartColor(current.length),
       },
     ]);
     setEditorOpen(true);
@@ -163,12 +162,12 @@ export default function MetricChart({
           <h2>{title}</h2>
           <p>{subtitle}</p>
         </div>
-        <button className="quiet-button" type="button" onClick={() => setEditorOpen((open) => !open)}>
+        {editable && <button className="quiet-button" type="button" onClick={() => setEditorOpen((open) => !open)}>
           {editorOpen ? "Hide chart controls" : "Compare or remap"}
-        </button>
+        </button>}
       </div>
 
-      <div className={`chart-editor ${editorOpen ? "is-open" : ""}`} hidden={!editorOpen}>
+      {editable && <div className={`chart-editor ${editorOpen ? "is-open" : ""}`} hidden={!editorOpen}>
         <div className="chart-editor-inner">
           <label className="axis-control">
             Horizontal axis
@@ -237,7 +236,7 @@ export default function MetricChart({
           </div>
           <button className="add-button" type="button" onClick={addSeries}>Add another benchmark or metric</button>
         </div>
-      </div>
+      </div>}
 
       <div className="chart-frame">
         {chart.datasets.length ? (
@@ -249,7 +248,7 @@ export default function MetricChart({
           />
         ) : <div className="chart-loading">Reading benchmark points…</div>}
       </div>
-      {series.some((item) => item.metric === "decode_tps") && (
+      {activeSeries.some((item) => item.metric === "decode_tps") && (
         <p className="chart-footnote"><span className="large-dot" /> Larger dots mark sustained decode probes; all points share one decode line.</p>
       )}
     </section>

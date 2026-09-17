@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   fetchBenchmark, fetchBenchmarks, fetchModels, fetchRunner,
   resumeBenchmark, startRunner, stopRunner,
 } from "./api.js";
-import MetricChart from "./MetricChart.jsx";
+import MetricChart, { chartColor } from "./MetricChart.jsx";
 
 function formatNumber(value, digits = 0) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -72,7 +72,88 @@ function RunnerPanel({ models, runner, onRunnerChange, onRefresh }) {
   );
 }
 
-function RunLedger({ benchmarks, modelBenchmarks, models, runner, onRunnerChange, onSelect, onRefresh, refreshing }) {
+function ModelComparison({ benchmarks, modelBenchmarks, metrics, details, ensureDetail }) {
+  const capacityModels = useMemo(
+    () => modelBenchmarks.filter((benchmark) => benchmark.runCount > 0),
+    [modelBenchmarks],
+  );
+  const [selectedIds, setSelectedIds] = useState(() => capacityModels.map((benchmark) => benchmark.id));
+  const knownIds = useRef(new Set(capacityModels.map((benchmark) => benchmark.id)));
+
+  useEffect(() => {
+    const added = capacityModels
+      .map((benchmark) => benchmark.id)
+      .filter((id) => !knownIds.current.has(id));
+    if (added.length) setSelectedIds((current) => [...current, ...added]);
+    knownIds.current = new Set(capacityModels.map((benchmark) => benchmark.id));
+  }, [capacityModels]);
+
+  const selected = new Set(selectedIds);
+  const seriesFor = (metric) => capacityModels
+    .map((benchmark, index) => ({ benchmarkId: benchmark.id, metric, color: chartColor(index) }))
+    .filter((item) => selected.has(item.benchmarkId));
+  const toggle = (id, checked) => setSelectedIds((current) => (
+    checked ? [...new Set([...current, id])] : current.filter((item) => item !== id)
+  ));
+
+  return (
+    <section className="comparison-section" aria-labelledby="comparison-title">
+      <div className="comparison-heading">
+        <div>
+          <div className="eyebrow">Across the field</div>
+          <h2 id="comparison-title">Compare every model</h2>
+          <p>One selection controls every chart below. Aggregated model lines average repeated runs at matching contexts.</p>
+        </div>
+        <div className="comparison-actions">
+          <span>{selectedIds.length} of {capacityModels.length} selected</span>
+          <button type="button" onClick={() => setSelectedIds(capacityModels.map((model) => model.id))}>Select all</button>
+          <button type="button" onClick={() => setSelectedIds([])}>Clear</button>
+        </div>
+      </div>
+      <div className="comparison-picker" role="group" aria-label="Models shown in comparison charts">
+        {capacityModels.map((model, index) => (
+          <label key={model.id}>
+            <input
+              type="checkbox"
+              checked={selected.has(model.id)}
+              onChange={(event) => toggle(model.id, event.target.checked)}
+            />
+            <span className="model-swatch" style={{ "--series-color": chartColor(index) }} aria-hidden="true" />
+            <span>{model.modelName}</span>
+          </label>
+        ))}
+      </div>
+      <div className="comparison-charts">
+        <MetricChart
+          title="Prefill speed"
+          subtitle="Append-only processing throughput by actual context"
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          initialSeries={[]} seriesOverride={seriesFor("prefill_tps")} editable={false}
+        />
+        <MetricChart
+          title="Decode speed"
+          subtitle="Generation throughput by actual context"
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          initialSeries={[]} seriesOverride={seriesFor("decode_tps")} editable={false}
+        />
+        <MetricChart
+          title="MLX active memory"
+          subtitle="Maximum active MLX allocation at each tested context"
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          initialSeries={[]} seriesOverride={seriesFor("mlx_active_gib")} editable={false}
+        />
+        <MetricChart
+          title="Swap growth"
+          subtitle="Peak swap growth since model load"
+          benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail}
+          initialSeries={[]} seriesOverride={seriesFor("swap_growth_gib")} editable={false}
+        />
+      </div>
+    </section>
+  );
+}
+
+function RunLedger({ benchmarks, modelBenchmarks, metrics, details, ensureDetail, models, runner, onRunnerChange, onSelect, onRefresh, refreshing }) {
   const [query, setQuery] = useState("");
   const [ledgerMode, setLedgerMode] = useState("models");
   const entries = ledgerMode === "models" ? modelBenchmarks : benchmarks;
@@ -87,6 +168,10 @@ function RunLedger({ benchmarks, modelBenchmarks, models, runner, onRunnerChange
         <p className="lede">See where local models slow down, consume memory, and begin to swap as their live context grows.</p>
       </header>
       <RunnerPanel models={models} runner={runner} onRunnerChange={onRunnerChange} onRefresh={onRefresh} />
+      <ModelComparison
+        benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics}
+        details={details} ensureDetail={ensureDetail}
+      />
       <div className="ledger-tools">
         <label className="search-field">
           Find {ledgerMode === "models" ? "a model" : "a benchmark"}
@@ -206,6 +291,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(true);
   const [models, setModels] = useState([]);
   const [runner, setRunner] = useState({ status: "idle", queue: [], log: [] });
+  const pendingDetails = useRef(new Map());
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -245,14 +331,19 @@ export default function App() {
 
   const ensureDetail = useCallback(async (id) => {
     if (!id || details[id]) return details[id];
-    try {
+    if (pendingDetails.current.has(id)) return pendingDetails.current.get(id);
+    const request = (async () => { try {
       const detail = await fetchBenchmark(id);
       setDetails((current) => ({ ...current, [id]: detail }));
       return detail;
     } catch (requestError) {
       setError(requestError.message);
       return null;
-    }
+    } finally {
+      pendingDetails.current.delete(id);
+    } })();
+    pendingDetails.current.set(id, request);
+    return request;
   }, [details]);
 
   useEffect(() => { if (selectedId) ensureDetail(selectedId); }, [ensureDetail, selectedId]);
@@ -276,5 +367,5 @@ export default function App() {
   if (selectedId && selected) {
     return <DetailView benchmark={selected} benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail} onBack={showList} runner={runner} onRunnerChange={setRunner} />;
   }
-  return <RunLedger benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} models={models} runner={runner} onRunnerChange={setRunner} onSelect={selectRun} onRefresh={refresh} refreshing={refreshing} />;
+  return <RunLedger benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail} models={models} runner={runner} onRunnerChange={setRunner} onSelect={selectRun} onRefresh={refresh} refreshing={refreshing} />;
 }
