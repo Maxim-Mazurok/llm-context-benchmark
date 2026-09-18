@@ -109,6 +109,16 @@ otherwise it defaults to 3. `--num-draft-tokens N` overrides it.
 
 Each run records `decode_mode`, `speculative_backend`, `draft_model`, `mtp_sidecar`, `mtp_helper`, and `num_draft_tokens` in `run-metadata.json`; the results viewer adds the backend/drafter to the model label. OMLX model settings are consulted for enabled native MTP, and the checkpoint is independently checked for both declared MTP heads and MTP tensors. Sidecars and external MTP helpers are loaded through a temporary overlay; the original OMLX model directories are never modified.
 
+#### MTP and wired memory
+
+MLX-LM's `BatchGenerator`, used by the OMLX MTP path, sets MLX's global wired-memory limit to the device's recommended working-set size. Wired allocations are kept resident in physical unified memory instead of being compressed or swapped by macOS. On a 32 GiB test machine, that limit was 26.8 GB.
+
+This benchmark resets the wired-memory limit to `0` after creating every MTP generator, including the warmup generator. A limit of `0` disables pinning; it does not limit MLX to zero memory. macOS can then manage the model, KV cache, compression, and swap as one pageable system workload, matching the benchmark's goal of finding usable context under whole-system memory pressure. It also keeps raw and MTP runs comparable because the raw path does not use `BatchGenerator` and therefore does not enable wiring.
+
+This policy follows a controlled Qwen3.6-35B-A3B experiment. With default wiring, MTP prefill fell to 286 tokens/s at 55K context, then rebounded to 962 tokens/s at 95K after critical memory pressure and a large process-residency drop. Disabling MTP prompt priming did not remove the rebound. With wiring disabled, prefill instead degraded from 283 tokens/s at 55K to 53 tokens/s at 70K under critical pressure. Raw decoding showed no comparable rebound. The phase timer was also verified to include `mx.eval` for every prefill chunk, ruling out deferred computation as the explanation.
+
+Consequently, these results measure pageable whole-system capacity rather than default OMLX server performance. Default OMLX may retain substantially higher large-context throughput by keeping model allocations resident, at the cost of stronger memory pressure on the rest of the system. Historical MTP charts produced before this policy may contain sharp throughput drops and rebounds at memory-residency transitions; do not interpret those rebounds as reduced context-computation cost.
+
 Ordinary MLX target/draft speculation requires cache rollback. Models with recurrent/linear-attention caches, or sliding caches that cease to be trimmable at long context, are not advertised for that backend. This prevents a pairing that works only for a short prompt from failing partway through a context benchmark.
 
 Specialized DFlash and VLM assistant checkpoints are deliberately not passed to MLX-LM's ordinary causal-draft API. They use different OMLX engines and cache contracts; the benchmark reports them as auxiliary rather than producing a misleading “speculative” result.
