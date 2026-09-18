@@ -3,10 +3,13 @@ from __future__ import annotations
 import csv
 import json
 import struct
+import sys
 from dataclasses import asdict
+from types import ModuleType
 
 import pytest
 
+from llm_context_benchmark.adapters.mlx_lm import MLXLMAdapter
 from llm_context_benchmark.adapters.mock import MockAdapter
 from llm_context_benchmark.cli import (
     _apply_resume_settings,
@@ -31,6 +34,41 @@ from llm_context_benchmark.useful_tasks import (
     load_workbench_observations,
     write_useful_task_bundle,
 )
+
+
+def test_mtp_generator_disables_wired_memory(monkeypatch):
+    wired_limits = []
+
+    class FakeBatchGenerator:
+        def __init__(self, model, **arguments):
+            self.model = model
+            self.arguments = arguments
+
+    mlx_module = ModuleType("mlx")
+    mlx_core_module = ModuleType("mlx.core")
+    mlx_core_module.set_wired_limit = wired_limits.append
+    mlx_module.core = mlx_core_module
+    mlx_lm_module = ModuleType("mlx_lm")
+    mlx_lm_generate_module = ModuleType("mlx_lm.generate")
+    mlx_lm_generate_module.BatchGenerator = FakeBatchGenerator
+    mlx_lm_module.generate = mlx_lm_generate_module
+    monkeypatch.setitem(sys.modules, "mlx", mlx_module)
+    monkeypatch.setitem(sys.modules, "mlx.core", mlx_core_module)
+    monkeypatch.setitem(sys.modules, "mlx_lm", mlx_lm_module)
+    monkeypatch.setitem(sys.modules, "mlx_lm.generate", mlx_lm_generate_module)
+
+    adapter = MLXLMAdapter("model", speculative_backend="omlx-mtp")
+    adapter.model = object()
+
+    generator = adapter._create_mtp_generator()
+
+    assert generator.model is adapter.model
+    assert generator.arguments == {
+        "prefill_step_size": 2048,
+        "completion_batch_size": 1,
+        "prefill_batch_size": 1,
+    }
+    assert wired_limits == [0]
 
 
 def test_workbench_telemetry_import_preserves_task_context_observations(tmp_path):

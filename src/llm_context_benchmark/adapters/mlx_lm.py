@@ -146,14 +146,7 @@ class MLXLMAdapter:
         mx.synchronize()
         mx.clear_cache()
         if self.speculative_backend == "omlx-mtp":
-            from mlx_lm.generate import BatchGenerator
-
-            self._mtp_generator = BatchGenerator(
-                self.model,
-                prefill_step_size=self.prefill_step_size,
-                completion_batch_size=1,
-                prefill_batch_size=1,
-            )
+            self._mtp_generator = self._create_mtp_generator()
         elif self.speculative_backend == "mlx-draft":
             self.prompt_cache = make_prompt_cache(self.model) + make_prompt_cache(
                 self.draft_model
@@ -262,14 +255,7 @@ class MLXLMAdapter:
         return False
 
     def _run_mtp_warmup(self, prompt: list[int]) -> None:
-        from mlx_lm.generate import BatchGenerator
-
-        generator = BatchGenerator(
-            self.model,
-            prefill_step_size=self.prefill_step_size,
-            completion_batch_size=1,
-            prefill_batch_size=1,
-        )
+        generator = self._create_mtp_generator()
         uid = generator.insert([prompt], max_tokens=[4])[0]
         finished = False
         while not finished:
@@ -279,6 +265,19 @@ class MLXLMAdapter:
                 for response in generated
             )
         generator.close()
+
+    def _create_mtp_generator(self):
+        import mlx.core as mlx_core
+        from mlx_lm.generate import BatchGenerator
+
+        generator = BatchGenerator(
+            self.model,
+            prefill_step_size=self.prefill_step_size,
+            completion_batch_size=1,
+            prefill_batch_size=1,
+        )
+        mlx_core.set_wired_limit(0)
+        return generator
 
     def _detect_context_limit(self) -> int | None:
         return self._detect_context_limit_for(
