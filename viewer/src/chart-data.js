@@ -16,3 +16,8 @@ export function chartPoint(point, metric, xMetric = "context_tokens") {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x, y, cycle: point.cycle, decodeKind: point.decode_kind };
 }
+
+export function individualBenchmarksForModel(modelBenchmark, benchmarks) {
+  const sourceIds = new Set(modelBenchmark.sourceIds || []);
+  return benchmarks.filter((benchmark) => sourceIds.has(benchmark.id));
+}

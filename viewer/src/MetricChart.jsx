@@ -11,7 +11,7 @@ import {
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 
-import { chartPoint } from "./chart-data.js";
+import { chartPoint, individualBenchmarksForModel } from "./chart-data.js";
 import { legendLabelMode, seriesLabel } from "./labels.js";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
@@ -202,9 +202,7 @@ export default function MetricChart({
                       ))}
                     </optgroup>
                     {modelBenchmarks.map((modelBenchmark) => {
-                      const modelRuns = benchmarks.filter(
-                        (benchmark) => benchmark.modelName === modelBenchmark.modelName,
-                      );
+                      const modelRuns = individualBenchmarksForModel(modelBenchmark, benchmarks);
                       if (!modelRuns.length) return null;
                       return <optgroup key={modelBenchmark.id} label={`${modelBenchmark.modelName} · individual runs`}>
                         {modelRuns.map((benchmark) => (

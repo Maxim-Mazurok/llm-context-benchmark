@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chartPoint } from "../src/chart-data.js";
+import { chartPoint, individualBenchmarksForModel } from "../src/chart-data.js";
+
+test("individual benchmarks use aggregate source IDs across model variants", () => {
+  const modelBenchmark = {
+    modelName: "Qwen3.6-35B-A3B",
+    sourceIds: ["raw-run", "speculative-run"],
+  };
+  const benchmarks = [
+    { id: "raw-run", modelName: "Qwen3.6-35B-A3B-4bit" },
+    { id: "speculative-run", modelName: "Qwen3.6-35B-A3B-4bit · MTP" },
+    { id: "other-run", modelName: "Qwen3.5-0.8B" },
+  ];
+
+  assert.deepEqual(
+    individualBenchmarksForModel(modelBenchmark, benchmarks).map((benchmark) => benchmark.id),
+    ["raw-run", "speculative-run"],
+  );
+});
 
 test("chart points omit missing measurements instead of coercing them to zero", () => {
   const memoryPoint = {
