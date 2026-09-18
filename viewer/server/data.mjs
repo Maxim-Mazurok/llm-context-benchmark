@@ -146,6 +146,22 @@ function modelAggregateId(modelDisplayName) {
   return `model-${Buffer.from(modelDisplayName).toString("base64url")}`;
 }
 
+const MODEL_VARIANT_SUFFIXES = [
+  /-QAT-MLX-(?:\d+bit|bf16|fp16)$/i,
+  /-OptiQ-\d+bit$/i,
+  /-MLX-(?:\d+bit|bf16|fp16)$/i,
+  /-MXFP\d+(?:-Q\d+)?$/i,
+  /-(?:\d+bit|bf16|fp16)$/i,
+];
+
+export function canonicalModelName(modelDisplayName) {
+  let canonicalName = String(modelDisplayName).split(" · ", 1)[0];
+  for (const suffix of MODEL_VARIANT_SUFFIXES) {
+    canonicalName = canonicalName.replace(suffix, "");
+  }
+  return canonicalName;
+}
+
 function mean(values) {
   const finite = values
     .filter((value) => value != null && value !== "" && Number.isFinite(Number(value)))
@@ -158,7 +174,7 @@ function mean(values) {
 export function buildModelBenchmarks(benchmarks) {
   const groups = new Map();
   for (const benchmark of benchmarks) {
-    const key = benchmark.modelName;
+    const key = canonicalModelName(benchmark.modelName);
     const group = groups.get(key) || [];
     group.push(benchmark);
     groups.set(key, group);

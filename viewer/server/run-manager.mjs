@@ -28,6 +28,17 @@ export function buildDecodeVariants(model, decodeMode = "raw") {
   return [false];
 }
 
+export function buildBenchmarkArguments(task) {
+  const commandArguments = task.resume
+    ? ["--resume", task.output, ...(task.cap ? ["--max-context", String(task.cap)] : ["--no-max-context"])]
+    : ["--model", task.model.path, "--output", task.output];
+  if (!task.resume && task.speculative) commandArguments.push("--speculative");
+  if (!task.resume && task.speculative && task.numDraftTokens) commandArguments.push("--num-draft-tokens", String(task.numDraftTokens));
+  if (!task.resume && task.cap) commandArguments.push("--max-context", String(task.cap));
+  if (Number.isFinite(task.swapStopGib)) commandArguments.push("--swap-stop-gib", String(task.swapStopGib));
+  return commandArguments;
+}
+
 export class RunManager {
   constructor({ launcher, runsDir }) {
     this.launcher = launcher;
@@ -86,13 +97,19 @@ export class RunManager {
     return this.snapshot();
   }
 
-  async resume({ runDir, maxContext }) {
+  async resume({ runDir, maxContext, swapStopGib = 4 }) {
     if (this.child || this.state.status === "running") throw new Error("A benchmark job is already running.");
     const cap = Number(maxContext) > 0 ? Number(maxContext) : null;
     this.cancelRequested = false;
     this.state = {
       status: "running",
-      queue: [{ output: runDir, resume: true, cap, model: { relativeName: path.basename(runDir) } }],
+      queue: [{
+        output: runDir,
+        resume: true,
+        cap,
+        model: { relativeName: path.basename(runDir) },
+        swapStopGib: Number(swapStopGib),
+      }],
       current: null,
       log: [],
     };
@@ -111,14 +128,8 @@ export class RunManager {
     while (this.state.queue.length && !this.cancelRequested) {
       const task = this.state.queue[0];
       this.state.current = task;
-      const args = task.resume
-        ? ["--resume", task.output, ...(task.cap ? ["--max-context", String(task.cap)] : ["--no-max-context"])]
-        : ["--model", task.model.path, "--output", task.output];
-      if (!task.resume && task.speculative) args.push("--speculative");
-      if (!task.resume && task.speculative && task.numDraftTokens) args.push("--num-draft-tokens", String(task.numDraftTokens));
-      if (!task.resume && task.cap) args.push("--max-context", String(task.cap));
-      if (!task.resume && Number.isFinite(task.swapStopGib)) args.push("--swap-stop-gib", String(task.swapStopGib));
-      const code = await this._spawn(args);
+      const commandArguments = buildBenchmarkArguments(task);
+      const code = await this._spawn(commandArguments);
       if (code !== 0) {
         this.state.status = this.cancelRequested ? "stopped" : "failed";
         this.state.current = null;

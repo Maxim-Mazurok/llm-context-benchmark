@@ -102,7 +102,7 @@ function ModelComparison({ benchmarks, modelBenchmarks, metrics, details, ensure
         <div>
           <div className="eyebrow">Across the field</div>
           <h2 id="comparison-title">Compare every model</h2>
-          <p>One selection controls every chart below. Aggregated model lines average repeated runs at matching contexts.</p>
+          <p>Runtime and quantization variants share one model line. Values average all matching runs at each context.</p>
         </div>
         <div className="comparison-actions">
           <span>{selectedIds.length} of {capacityModels.length} selected</span>
@@ -213,8 +213,9 @@ function DetailView({ benchmark, benchmarks, modelBenchmarks, metrics, details, 
   const hasCapacity = aggregate ? benchmark.runCount > 0 : benchmark.kind === "capacity-run";
   const hasUsefulTasks = aggregate ? benchmark.observationCount > 0 : benchmark.kind === "useful-task-run";
   const [resumeTarget, setResumeTarget] = useState("");
+  const [resumeSwapStopGib, setResumeSwapStopGib] = useState("4");
   const [resumeError, setResumeError] = useState("");
-  const resume = async () => { try { onRunnerChange(await resumeBenchmark(benchmark.id, Number(resumeTarget) || null)); setResumeError(""); } catch (error) { setResumeError(error.message); } };
+  const resume = async () => { try { onRunnerChange(await resumeBenchmark(benchmark.id, Number(resumeTarget) || null, Number(resumeSwapStopGib))); setResumeError(""); } catch (error) { setResumeError(error.message); } };
   return (
     <main id="main-content" className="page-shell detail-page">
       <button className="back-button" type="button" onClick={onBack}>← All benchmarked models</button>
@@ -233,7 +234,7 @@ function DetailView({ benchmark, benchmarks, modelBenchmarks, metrics, details, 
           <div><dt>{aggregate ? "Useful-task observations" : "Stopped"}</dt><dd className="reason-value">{aggregate ? formatNumber(benchmark.observationCount) : benchmark.stopReason.replaceAll("_", " ")}</dd></div>
         </dl>
       </header>
-      {benchmark.resumable && !["running", "stopping"].includes(runner?.status) && <section className="resume-strip"><span><strong>Continue this cache</strong><small>The model reloads and reconstructs the last completed context checkpoint.</small></span><label>Final target <span className="optional">optional</span><input type="number" min={benchmark.maxContextTokens + 1} value={resumeTarget} placeholder="Model/runtime limit" onChange={(event) => setResumeTarget(event.target.value)} /></label><button type="button" onClick={resume}>Resume benchmark</button>{resumeError && <small className="runner-message">{resumeError}</small>}</section>}
+      {benchmark.resumable && !["running", "stopping"].includes(runner?.status) && <section className="resume-strip"><span><strong>Continue this cache</strong><small>The model reloads and reconstructs the last completed context checkpoint.</small></span><label>Final target <span className="optional">optional</span><input type="number" min={benchmark.maxContextTokens + 1} value={resumeTarget} placeholder="Model/runtime limit" onChange={(event) => setResumeTarget(event.target.value)} /></label><label>Maximum added swap<input type="number" min="0" step="0.5" value={resumeSwapStopGib} onChange={(event) => setResumeSwapStopGib(event.target.value)} /><small>GiB peak growth</small></label><button type="button" onClick={resume}>Resume benchmark</button>{resumeError && <small className="runner-message">{resumeError}</small>}</section>}
       <aside className="measurement-note">
         <strong>{aggregate ? "Model aggregate." : "Period-local measurements."}</strong> {aggregate ? "Capacity values are averaged only where runs share the same actual context. Useful tasks remain independent requests and appear in their own chart." : "Each prefill point measures only that append phase—not elapsed time since the run began. Peak swap retains brief spikes that cycle-end readings miss. Memory pressure can oscillate independently as macOS compresses, evicts, pages, and reclaims memory."}
         {benchmark.measurement?.memory && <small>{benchmark.measurement.memory}</small>}

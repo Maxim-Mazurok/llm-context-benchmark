@@ -73,6 +73,7 @@ export default function MetricChart({
         .filter(Boolean);
       datasets.push({
         label: seriesLabel(run, metric, labelMode),
+        metric: item.metric,
         data: points,
         borderColor: item.color,
         backgroundColor: item.color,
@@ -128,7 +129,7 @@ export default function MetricChart({
             },
             afterLabel(context) {
               const point = context.raw;
-              return point.decodeKind === "long" && context.dataset.label.includes("Decode speed")
+              return point.decodeKind === "long" && context.dataset.metric === "decode_tps"
                 ? "Sustained decode probe"
                 : `Cycle ${point.cycle}`;
             },

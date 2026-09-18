@@ -5,6 +5,7 @@ import {
   aggregateBenchmarkDetails,
   buildCyclePoints,
   buildModelBenchmarks,
+  canonicalModelName,
 } from "./data.mjs";
 
 test("prefill throughput stays phase-local and long decode remains metadata", () => {
@@ -59,6 +60,39 @@ test("model benchmarks group capacity and useful-task runs", () => {
   assert.equal(modelBenchmarks[0].maxContextTokens, 2000);
   assert.equal(modelBenchmarks[0].finalDecodeTps, 50);
   assert.equal(modelBenchmarks[0].peakMlxActiveGib, 3);
+});
+
+test("model benchmarks group runtime and quantization variants by base model", () => {
+  const variants = [
+    "Qwen3.5-0.8B",
+    "Qwen3.5-0.8B-MLX-bf16",
+    "Qwen3.5-0.8B-OptiQ-4bit",
+    "Qwen3.5-0.8B · MTP",
+  ];
+  const modelBenchmarks = buildModelBenchmarks(variants.map((modelName, index) => ({
+    id: `run-${index}`,
+    kind: "capacity-run",
+    model: `/models/${modelName}`,
+    modelName,
+    runAt: `2026-09-17T0${index + 1}:00:00.000Z`,
+    runAtEpoch: index + 1,
+    maxContextTokens: 1000,
+    finalDecodeTps: 20 + (index * 10),
+    peakMlxActiveGib: 2 + index,
+    phaseCount: 1,
+  })));
+
+  assert.equal(modelBenchmarks.length, 1);
+  assert.equal(modelBenchmarks[0].modelName, "Qwen3.5-0.8B");
+  assert.equal(modelBenchmarks[0].runCount, 4);
+  assert.equal(modelBenchmarks[0].finalDecodeTps, 35);
+  assert.equal(modelBenchmarks[0].peakMlxActiveGib, 3.5);
+});
+
+test("canonical model names remove known packaging suffixes", () => {
+  assert.equal(canonicalModelName("gemma-4-26B-A4B-it-QAT-MLX-4bit"), "gemma-4-26B-A4B-it");
+  assert.equal(canonicalModelName("Qwen3.6-35B-A3B-4bit"), "Qwen3.6-35B-A3B");
+  assert.equal(canonicalModelName("gpt-oss-20b-MXFP4-Q8"), "gpt-oss-20b");
 });
 
 test("model detail averages matching contexts into one line", () => {

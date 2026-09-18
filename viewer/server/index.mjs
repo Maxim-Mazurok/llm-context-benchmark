@@ -45,7 +45,11 @@ app.post("/api/benchmarks/:id/resume", async (request, response, next) => {
     if (path.basename(request.params.id) !== request.params.id) return response.status(400).json({ error: "Invalid run id." });
     const runDir = path.resolve(runsDir, request.params.id);
     if (!runDir.startsWith(`${runsDir}${path.sep}`)) return response.status(400).json({ error: "Invalid run path." });
-    response.status(202).json(await runManager.resume({ runDir, maxContext: request.body.maxContext }));
+    response.status(202).json(await runManager.resume({
+      runDir,
+      maxContext: request.body.maxContext,
+      swapStopGib: request.body.swapStopGib,
+    }));
   } catch (error) { next(error); }
 });
 

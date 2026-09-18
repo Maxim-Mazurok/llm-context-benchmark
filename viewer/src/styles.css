@@ -142,7 +142,7 @@ h1 {
 .comparison-picker label:has(input:checked) { border-color: var(--ink); }
 .model-swatch { width: 0.65rem; height: 0.65rem; border-radius: 50%; background: var(--series-color); }
 .comparison-charts { display: grid; gap: clamp(3rem, 7vw, 6rem); }
-.resume-strip { display: grid; grid-template-columns: 1fr minmax(12rem, 0.35fr) auto; gap: 1rem; align-items: end; padding: 1rem 0; border-bottom: 0.0625rem solid var(--ink); }
+.resume-strip { display: grid; grid-template-columns: 1fr repeat(2, minmax(10rem, 0.3fr)) auto; gap: 1rem; align-items: end; padding: 1rem 0; border-bottom: 0.0625rem solid var(--ink); }
 .resume-strip span strong, .resume-strip span small { display: block; }
 .resume-strip span small { color: var(--muted); }
 .resume-strip label { display: grid; gap: 0.2rem; color: var(--muted); font-size: 0.72rem; font-weight: 650; }

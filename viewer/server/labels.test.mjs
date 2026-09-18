@@ -24,10 +24,25 @@ test("a single run uses metric-only legend labels", () => {
 
 test("distinct models omit run times", () => {
   const mode = legendLabelMode(
-    [{ benchmarkId: "first" }, { benchmarkId: "second" }],
+    [
+      { benchmarkId: "first", metric: "prefill_tps" },
+      { benchmarkId: "second", metric: "prefill_tps" },
+    ],
     runs,
   );
   assert.equal(mode, "model");
+  assert.equal(seriesLabel(runs.first, speed, mode), "Model A");
+});
+
+test("distinct models retain metric names when metrics differ", () => {
+  const mode = legendLabelMode(
+    [
+      { benchmarkId: "first", metric: "prefill_tps" },
+      { benchmarkId: "second", metric: "decode_tps" },
+    ],
+    runs,
+  );
+  assert.equal(mode, "model-metric");
   assert.equal(seriesLabel(runs.first, speed, mode), "Model A · Prefill speed");
 });
 
@@ -42,9 +57,12 @@ test("repeated models include run times", () => {
 
 test("aggregate models never include evidence timestamps", () => {
   const mode = legendLabelMode(
-    [{ benchmarkId: "modelA" }, { benchmarkId: "modelB" }],
+    [
+      { benchmarkId: "modelA", metric: "prefill_tps" },
+      { benchmarkId: "modelB", metric: "prefill_tps" },
+    ],
     runs,
   );
   assert.equal(mode, "model");
-  assert.equal(seriesLabel(runs.modelA, speed, mode), "Model A · Prefill speed");
+  assert.equal(seriesLabel(runs.modelA, speed, mode), "Model A");
 });

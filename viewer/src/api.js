@@ -25,4 +25,4 @@ async function post(path, body = {}) {
 
 export const startRunner = (options) => post("/api/runner/start", options);
 export const stopRunner = () => post("/api/runner/stop");
-export const resumeBenchmark = (id, maxContext) => post(`/api/benchmarks/${encodeURIComponent(id)}/resume`, { maxContext });
+export const resumeBenchmark = (id, maxContext, swapStopGib) => post(`/api/benchmarks/${encodeURIComponent(id)}/resume`, { maxContext, swapStopGib });
