@@ -23,6 +23,9 @@ class SpeculativePlan:
         if self.backend == "omlx-mtp":
             helper = f": {self.mtp_helper.name}" if self.mtp_helper else ""
             return f"OMLX Lightning MTP ({self.source}{helper})"
+        if self.backend == "mlx-vlm-mtp":
+            draft = self.draft_model.name if self.draft_model else "unknown drafter"
+            return f"MLX-VLM MTP: {draft} ({self.source})"
         draft = self.draft_model.name if self.draft_model else "unknown draft"
         return f"MLX draft: {draft} ({self.source})"
 
@@ -149,6 +152,43 @@ def _find_mtp_helper(
             _model_weight_bytes(helper.path),
             helper.relative_name.casefold(),
         ),
+    )
+
+
+def _is_vlm_mtp_pair(target_path: Path, helper_path: Path) -> bool:
+    target_config = _read_config(target_path)
+    helper_config = _read_config(helper_path)
+    target_model_type = str(target_config.get("model_type") or "")
+    helper_model_type = str(helper_config.get("model_type") or "")
+    if helper_model_type not in {
+        "gemma4_assistant",
+        "gemma4_unified_assistant",
+    } or helper_model_type != f"{target_model_type}_assistant":
+        return False
+    target_hidden_size = _config_value(target_config, "hidden_size")
+    helper_backbone_hidden_size = helper_config.get("backbone_hidden_size")
+    if (
+        target_hidden_size is None
+        or helper_backbone_hidden_size != target_hidden_size
+        or _config_value(target_config, "vocab_size")
+        != _config_value(helper_config, "vocab_size")
+    ):
+        return False
+    return True
+
+
+def _find_vlm_mtp_helper(
+    target_path: Path, helpers: list[LocalModel]
+) -> LocalModel | None:
+    candidates = [
+        helper
+        for helper in helpers
+        if _is_vlm_mtp_pair(target_path, helper.path)
+    ]
+    return (
+        min(candidates, key=lambda helper: helper.relative_name.casefold())
+        if candidates
+        else None
     )
 
 
@@ -323,7 +363,16 @@ def plans_for_models(
         options: list[SpeculativePlan] = []
         configured = _settings_for_model(target.path, settings)
         mtp_sidecar = find_mtp_sidecar(target.path)
-        if has_embedded_mtp(target.path):
+        vlm_mtp_helper = _find_vlm_mtp_helper(target.path, helpers or [])
+        if vlm_mtp_helper is not None:
+            options.append(
+                SpeculativePlan(
+                    "mlx-vlm-mtp",
+                    "assistant helper",
+                    draft_model=vlm_mtp_helper.path,
+                )
+            )
+        elif has_embedded_mtp(target.path):
             source = "OMLX config" if configured.get("mtp_enabled") else "detected"
             options.append(SpeculativePlan("omlx-mtp", source))
         elif mtp_sidecar is not None and _mtp_compatible(_read_config(target.path)):
@@ -380,6 +429,14 @@ def choose_speculative_plan(
 ) -> SpeculativePlan | None:
     if draft_model is not None:
         resolved_draft = draft_model.expanduser().resolve()
+        if backend in ("auto", "mlx-vlm-mtp") and _is_vlm_mtp_pair(
+            target_path, resolved_draft
+        ):
+            return SpeculativePlan(
+                "mlx-vlm-mtp", "explicit", draft_model=resolved_draft
+            )
+        if backend == "mlx-vlm-mtp":
+            return None
         if not (
             _supports_external_draft(target_path)
             and _supports_external_draft(resolved_draft)

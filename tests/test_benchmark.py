@@ -71,6 +71,20 @@ def test_mtp_generator_disables_wired_memory(monkeypatch):
     assert wired_limits == [0]
 
 
+def test_context_limit_detection_reads_nested_text_config(tmp_path):
+    model_path = tmp_path / "gemma-model"
+    model_path.mkdir()
+    (model_path / "config.json").write_text(
+        json.dumps({"text_config": {"max_position_embeddings": 262_144}})
+    )
+
+    context_limit = MLXLMAdapter._detect_context_limit_for(
+        object(), object(), str(model_path)
+    )
+
+    assert context_limit == 262_144
+
+
 def test_workbench_telemetry_import_preserves_task_context_observations(tmp_path):
     source = tmp_path / "workbench-run"
     source.mkdir()
@@ -571,6 +585,49 @@ def test_speculative_discovery_reuses_compatible_mtp_helper_for_targets(tmp_path
     for target in targets:
         assert plans[target][0].backend == "omlx-mtp"
         assert plans[target][0].mtp_helper == helper
+
+
+def test_speculative_discovery_pairs_gemma_vlm_mtp_assistant(tmp_path):
+    models = tmp_path / "models"
+    target = _write_model(
+        models,
+        "mlx-community/gemma-4-12B-it-8bit",
+        model_type="gemma4_unified",
+        architecture="Gemma4UnifiedForConditionalGeneration",
+    )
+    helper = _write_model(
+        models,
+        "mlx-community/gemma-4-12B-it-qat-assistant-bf16",
+        model_type="gemma4_unified_assistant",
+        architecture="Gemma4UnifiedAssistantForCausalLM",
+    )
+    target_config = json.loads((target / "config.json").read_text())
+    target_config["text_config"] = {"hidden_size": 3840, "vocab_size": 262_144}
+    (target / "config.json").write_text(json.dumps(target_config))
+    helper_config = json.loads((helper / "config.json").read_text())
+    helper_config.update({"backbone_hidden_size": 3840})
+    helper_config["text_config"] = {"hidden_size": 1024, "vocab_size": 262_144}
+    (helper / "config.json").write_text(json.dumps(helper_config))
+    (target / "tokenizer.json").write_text('{"target": true}')
+    (helper / "tokenizer.json").write_text('{"assistant": true}')
+
+    included, excluded = discover_omlx_models(models)
+    plans = plans_for_models(
+        included, tmp_path / "missing-settings.json", excluded
+    )
+
+    assert plans[target][0].backend == "mlx-vlm-mtp"
+    assert plans[target][0].draft_model == helper
+    assert choose_speculative_plan(
+        target,
+        included,
+        tmp_path / "missing-settings.json",
+        backend="mlx-vlm-mtp",
+        draft_model=helper,
+        helpers=excluded,
+    ) == plans[target][0].__class__(
+        "mlx-vlm-mtp", "explicit", draft_model=helper.resolve()
+    )
 
 
 def test_speculative_discovery_rejects_mismatched_mtp_helper(tmp_path):

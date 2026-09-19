@@ -75,7 +75,7 @@ Let the benchmark choose the best supported local path:
   --speculative
 ```
 
-`auto` prefers a valid OMLX Lightning MTP head: embedded weights, a prefixed local `mtp.safetensors` sidecar, or a compatible MTP-only model elsewhere in the OMLX library. MTP helpers are paired by their inner text architecture and dense/MoE dimensions, then ranked by model release and tokenizer affinity. This handles helpers whose outer config is labeled `qwen3_5_mtp` while the target is labeled `qwen3_5_moe`. One helper may serve multiple compatible targets, such as the original and uncensored variants of the same Qwen base model. Otherwise the benchmark selects the smallest installed generative model with an identical `tokenizer.json` and a rollback-capable long-context cache, then uses MLX-LM target/draft speculation. Override either choice explicitly:
+`auto` prefers a compatible MLX-VLM MTP assistant, then a valid OMLX Lightning MTP head: embedded weights, a prefixed local `mtp.safetensors` sidecar, or a compatible MTP-only model elsewhere in the OMLX library. Gemma 4 VLM assistants are paired by model family, target hidden size, vocabulary, and tokenizer. OMLX MTP helpers are paired by their inner text architecture and dense/MoE dimensions, then ranked by model release and tokenizer affinity. This handles helpers whose outer config is labeled `qwen3_5_mtp` while the target is labeled `qwen3_5_moe`. One helper may serve multiple compatible targets, such as the original and uncensored variants of the same Qwen base model. Otherwise the benchmark selects the smallest installed generative model with an identical `tokenizer.json` and a rollback-capable long-context cache, then uses MLX-LM target/draft speculation. Override either choice explicitly:
 
 ```bash
 # Force an ordinary target + draft model pairing
@@ -89,6 +89,12 @@ Let the benchmark choose the best supported local path:
   --model ~/.omlx/models/Qwen/Qwen3.5-0.8B \
   --speculative --speculative-backend omlx-mtp \
   --num-draft-tokens 2
+
+# Require a Gemma 4 MLX-VLM MTP assistant
+./bin/llm-context-bench \
+  --model ~/.omlx/models/mlx-community/gemma-4-12B-it-8bit \
+  --speculative --speculative-backend mlx-vlm-mtp \
+  --draft-model ~/.omlx/models/mlx-community/gemma-4-12B-it-qat-assistant-bf16
 ```
 
 A speculative batch sweep runs only targets with a detected compatible path and reports skipped models:
@@ -121,7 +127,7 @@ Consequently, these results measure pageable whole-system capacity rather than d
 
 Ordinary MLX target/draft speculation requires cache rollback. Models with recurrent/linear-attention caches, or sliding caches that cease to be trimmable at long context, are not advertised for that backend. This prevents a pairing that works only for a short prompt from failing partway through a context benchmark.
 
-Specialized DFlash and VLM assistant checkpoints are deliberately not passed to MLX-LM's ordinary causal-draft API. They use different OMLX engines and cache contracts; the benchmark reports them as auxiliary rather than producing a misleading “speculative” result.
+Gemma 4 VLM MTP assistant checkpoints use MLX-VLM's dedicated MTP path. Other specialized VLM assistants and DFlash checkpoints remain auxiliary until their runtime-specific cache contracts are supported; they are never passed to MLX-LM's ordinary causal-draft API.
 
 All normal controls apply, so a bounded comparison sweep can use, for example:
 

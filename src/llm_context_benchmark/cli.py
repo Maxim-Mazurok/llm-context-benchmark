@@ -90,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--speculative-backend",
-        choices=("auto", "mlx-draft", "omlx-mtp"),
+        choices=("auto", "mlx-draft", "mlx-vlm-mtp", "omlx-mtp"),
         default="auto",
         help="Speculative backend selection (default: auto)",
     )

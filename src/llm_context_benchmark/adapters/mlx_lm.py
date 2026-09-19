@@ -54,6 +54,7 @@ class MLXLMAdapter:
         self.model = None
         self.draft_model = None
         self.tokenizer = None
+        self.processor = None
         self.draft_tokenizer = None
         self.prompt_cache = None
         self._mtp_generator = None
@@ -66,40 +67,55 @@ class MLXLMAdapter:
 
     def load(self) -> None:
         import mlx.core as mx
-        from mlx_lm import load
-        from mlx_lm.generate import generate_step
-        from mlx_lm.models.cache import make_prompt_cache
 
-        load_model_id = self.model_id
-        if self.speculative_backend == "omlx-mtp":
-            if self.kv_bits is not None:
-                raise ValueError("OMLX MTP does not support --kv-bits in this adapter")
-            from omlx.model_settings import ModelSettings
-            from omlx.utils.model_loading import maybe_apply_pre_load_patches
-
-            if self.mtp_sidecar or self.mtp_helper:
-                load_model_id = self._prepare_mtp_overlay()
-            settings = ModelSettings(
-                mtp_enabled=True,
-                mtp_num_draft_tokens=self.num_draft_tokens,
-            )
-            maybe_apply_pre_load_patches(load_model_id, model_settings=settings)
-
-        kwargs = {"tokenizer_config": {"trust_remote_code": self.trust_remote_code}}
-        try:
-            self.model, self.tokenizer = load(load_model_id, **kwargs)
-        except TypeError:
-            self.model, self.tokenizer = load(load_model_id)
-        if self.speculative_backend == "mlx-draft":
+        if self.speculative_backend == "mlx-vlm-mtp":
             if not self.draft_model_id:
-                raise ValueError("MLX draft speculation requires a draft model")
-            try:
-                self.draft_model, self.draft_tokenizer = load(
-                    self.draft_model_id, **kwargs
+                raise ValueError("MLX-VLM MTP requires an assistant draft model")
+            from mlx_vlm.speculative.drafters import load_drafter
+            from mlx_vlm.utils import load as load_vlm
+
+            self.model, self.processor = load_vlm(self.model_id)
+            self.tokenizer = self.processor.tokenizer
+            self.draft_model, draft_kind = load_drafter(
+                self.draft_model_id, kind="mtp"
+            )
+            if draft_kind != "mtp":
+                raise ValueError("MLX-VLM assistant did not resolve to MTP")
+        else:
+            from mlx_lm import load
+
+            load_model_id = self.model_id
+            if self.speculative_backend == "omlx-mtp":
+                if self.kv_bits is not None:
+                    raise ValueError("OMLX MTP does not support --kv-bits in this adapter")
+                from omlx.model_settings import ModelSettings
+                from omlx.utils.model_loading import maybe_apply_pre_load_patches
+
+                if self.mtp_sidecar or self.mtp_helper:
+                    load_model_id = self._prepare_mtp_overlay()
+                settings = ModelSettings(
+                    mtp_enabled=True,
+                    mtp_num_draft_tokens=self.num_draft_tokens,
                 )
+                maybe_apply_pre_load_patches(load_model_id, model_settings=settings)
+
+            load_arguments = {
+                "tokenizer_config": {"trust_remote_code": self.trust_remote_code}
+            }
+            try:
+                self.model, self.tokenizer = load(load_model_id, **load_arguments)
             except TypeError:
-                self.draft_model, self.draft_tokenizer = load(self.draft_model_id)
-            self._validate_draft_tokenizer()
+                self.model, self.tokenizer = load(load_model_id)
+            if self.speculative_backend == "mlx-draft":
+                if not self.draft_model_id:
+                    raise ValueError("MLX draft speculation requires a draft model")
+                try:
+                    self.draft_model, self.draft_tokenizer = load(
+                        self.draft_model_id, **load_arguments
+                    )
+                except TypeError:
+                    self.draft_model, self.draft_tokenizer = load(self.draft_model_id)
+                self._validate_draft_tokenizer()
         encoded = self.tokenizer.encode(self.seed_text, add_special_tokens=False)
         self._seed_tokens = [int(t) for t in encoded]
         if not self._seed_tokens:
@@ -115,7 +131,10 @@ class MLXLMAdapter:
                     "an embedded MTP head"
                 )
             self._run_mtp_warmup(warmup)
+        elif self.speculative_backend == "mlx-vlm-mtp":
+            list(self._vlm_mtp_stream(warmup, 4, prompt_cache=None))
         elif self.speculative_backend == "mlx-draft":
+            from mlx_lm.models.cache import make_prompt_cache
             from mlx_lm.generate import speculative_generate_step
 
             warmup_cache = make_prompt_cache(self.model) + make_prompt_cache(
@@ -133,6 +152,9 @@ class MLXLMAdapter:
                 )
             )
         else:
+            from mlx_lm.generate import generate_step
+            from mlx_lm.models.cache import make_prompt_cache
+
             warmup_cache = make_prompt_cache(self.model)
             list(
                 generate_step(
@@ -147,11 +169,20 @@ class MLXLMAdapter:
         mx.clear_cache()
         if self.speculative_backend == "omlx-mtp":
             self._mtp_generator = self._create_mtp_generator()
+        elif self.speculative_backend == "mlx-vlm-mtp":
+            from mlx_vlm.models.cache import make_prompt_cache
+
+            self.prompt_cache = make_prompt_cache(self.model.language_model)
+            mx.set_wired_limit(0)
         elif self.speculative_backend == "mlx-draft":
+            from mlx_lm.models.cache import make_prompt_cache
+
             self.prompt_cache = make_prompt_cache(self.model) + make_prompt_cache(
                 self.draft_model
             )
         else:
+            from mlx_lm.models.cache import make_prompt_cache
+
             self.prompt_cache = make_prompt_cache(self.model)
         self.context_limit = self._detect_context_limit()
         if self.speculative_backend == "mlx-draft":
@@ -164,7 +195,7 @@ class MLXLMAdapter:
                     if self.context_limit is not None
                     else draft_limit
                 )
-        for package in ("mlx", "mlx-lm", "transformers"):
+        for package in ("mlx", "mlx-lm", "mlx-vlm", "transformers"):
             try:
                 self._versions[package] = importlib.metadata.version(package)
             except importlib.metadata.PackageNotFoundError:
@@ -291,22 +322,34 @@ class MLXLMAdapter:
         for source in (config, getattr(model, "config", None)):
             if source is None:
                 continue
-            for key in ("max_position_embeddings", "max_seq_len", "model_max_length"):
-                value = getattr(source, key, None)
-                if isinstance(value, int) and 0 < value < 10**9:
-                    candidates.append(value)
-        path = Path(model_id).expanduser()
-        if path.is_dir() and (path / "config.json").exists():
-            try:
-                raw = json.loads((path / "config.json").read_text())
+            nested_sources = (source, getattr(source, "text_config", None))
+            for nested_source in nested_sources:
+                if nested_source is None:
+                    continue
                 for key in (
                     "max_position_embeddings",
                     "max_seq_len",
                     "model_max_length",
                 ):
-                    value = raw.get(key)
+                    value = getattr(nested_source, key, None)
                     if isinstance(value, int) and 0 < value < 10**9:
                         candidates.append(value)
+        path = Path(model_id).expanduser()
+        if path.is_dir() and (path / "config.json").exists():
+            try:
+                raw = json.loads((path / "config.json").read_text())
+                raw_sources = (raw, raw.get("text_config"))
+                for raw_source in raw_sources:
+                    if not isinstance(raw_source, dict):
+                        continue
+                    for key in (
+                        "max_position_embeddings",
+                        "max_seq_len",
+                        "model_max_length",
+                    ):
+                        value = raw_source.get(key)
+                        if isinstance(value, int) and 0 < value < 10**9:
+                            candidates.append(value)
             except (OSError, json.JSONDecodeError):
                 pass
         tokenizer_limit = getattr(tokenizer, "model_max_length", None)
@@ -357,7 +400,9 @@ class MLXLMAdapter:
 
         import mlx.core as mx
 
-        if self.speculative_backend == "mlx-draft":
+        if self.speculative_backend == "mlx-vlm-mtp":
+            next(iter(self._vlm_mtp_stream(prompt, 1)), None)
+        elif self.speculative_backend == "mlx-draft":
             from mlx_lm.generate import speculative_generate_step
 
             stream = speculative_generate_step(
@@ -396,6 +441,10 @@ class MLXLMAdapter:
     ) -> CycleResult:
         if self.speculative_backend == "omlx-mtp":
             return self._append_mtp(
+                input_tokens, max_tokens, on_prefill_complete, on_token
+            )
+        if self.speculative_backend == "mlx-vlm-mtp":
+            return self._append_vlm_mtp(
                 input_tokens, max_tokens, on_prefill_complete, on_token
             )
         if self.speculative_backend == "mlx-draft":
@@ -481,6 +530,63 @@ class MLXLMAdapter:
         generated: list[int] = []
         timestamps: list[float] = []
         for index, (token, _logprobs, _from_draft) in enumerate(stream):
+            now = time.perf_counter()
+            if prefill_finished is None:
+                prefill_finished = now
+                on_prefill_complete()
+            value = int(token)
+            generated.append(value)
+            timestamps.append(now)
+            on_token(value, index, now)
+        if prefill_finished is None:
+            prefill_finished = time.perf_counter()
+            on_prefill_complete()
+        self._pending_token = generated[-1] if generated else self._pending_token
+        return CycleResult(
+            appended_input_tokens=len(input_tokens),
+            cache_catchup_tokens=catchup,
+            generated_tokens=generated,
+            prefill_started=prefill_started,
+            prefill_finished=prefill_finished,
+            token_timestamps=timestamps,
+        )
+
+    def _vlm_mtp_stream(self, prompt: list[int], max_tokens: int, prompt_cache=None):
+        import mlx.core as mx
+        from mlx_vlm.generate import generate_step
+
+        return generate_step(
+            mx.array([prompt], dtype=mx.int32),
+            self.model,
+            None,
+            None,
+            max_tokens=max_tokens,
+            temperature=0,
+            prompt_cache=self.prompt_cache if prompt_cache is None else prompt_cache,
+            prefill_step_size=self.prefill_step_size,
+            draft_model=self.draft_model,
+            draft_kind="mtp",
+            draft_block_size=self.num_draft_tokens + 1,
+        )
+
+    def _append_vlm_mtp(
+        self,
+        input_tokens: list[int],
+        max_tokens: int,
+        on_prefill_complete: Callable[[], None],
+        on_token: Callable[[int, int, float], None],
+    ) -> CycleResult:
+        catchup = 1 if self._pending_token is not None else 0
+        prompt = (
+            [self._pending_token] if self._pending_token is not None else []
+        ) + input_tokens
+        prefill_started = time.perf_counter()
+        prefill_finished: float | None = None
+        generated: list[int] = []
+        timestamps: list[float] = []
+        for index, (token, _logprobs) in enumerate(
+            self._vlm_mtp_stream(prompt, max_tokens)
+        ):
             now = time.perf_counter()
             if prefill_finished is None:
                 prefill_finished = now

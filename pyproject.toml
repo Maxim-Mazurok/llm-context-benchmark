@@ -12,7 +12,7 @@ license = {text = "MIT"}
 authors = [{name = "Max"}]
 
 [project.optional-dependencies]
-mlx = ["mlx-lm>=0.30,<0.32"]
+mlx = ["mlx-lm>=0.30,<0.32", "mlx-vlm"]
 test = ["pytest>=8"]
 
 [project.scripts]
