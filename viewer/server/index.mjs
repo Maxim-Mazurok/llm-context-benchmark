@@ -1,10 +1,13 @@
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { existsSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { createWriteStream, existsSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+import { pipeline } from "node:stream/promises";
 
 import express from "express";
 
@@ -16,6 +19,10 @@ const projectRoot = path.resolve(serverDir, "../..");
 const viewerRoot = path.join(projectRoot, "viewer");
 const runsDir = path.resolve(process.env.BENCHMARK_RUNS_DIR || path.join(projectRoot, "runs"));
 const launcher = path.join(projectRoot, "bin", "llm-context-bench");
+const inferenceLauncher = path.join(projectRoot, "bin", "llm-context-infer");
+const uploadDirectory = path.join(os.tmpdir(), "llm-context-benchmark-uploads");
+const omlxModelsDirectory = path.join(os.homedir(), ".omlx", "models");
+const uploads = new Map();
 const runManager = new RunManager({ launcher, runsDir });
 const execFileAsync = promisify(execFile);
 const production = process.argv.includes("--production") || process.env.NODE_ENV === "production";
@@ -33,6 +40,69 @@ app.get("/api/models", async (_request, response, next) => {
     const { stdout } = await execFileAsync(launcher, ["--list-omlx-models", "--json"], { maxBuffer: 10 * 1024 * 1024 });
     response.json(JSON.parse(stdout));
   } catch (error) { next(error); }
+});
+
+app.post("/api/inference/files", async (request, response, next) => {
+  const uploadId = randomUUID();
+  const documentPath = path.join(uploadDirectory, uploadId);
+  try {
+    await mkdir(uploadDirectory, { recursive: true });
+    await pipeline(request, createWriteStream(documentPath, { flags: "wx" }));
+    uploads.set(uploadId, { documentPath, fileName: request.get("x-file-name") || "document.txt" });
+    response.status(201).json({ uploadId });
+  } catch (error) {
+    await rm(documentPath, { force: true });
+    next(error);
+  }
+});
+
+app.post("/api/inference/generate", (request, response) => {
+  const { uploadId, model, prompt, maxOutputTokens, reasoningEnabled, maxReasoningTokens } = request.body;
+  const upload = uploads.get(uploadId);
+  const modelPath = typeof model === "string" ? path.resolve(model) : "";
+  if (!upload) return response.status(404).json({ error: "Uploaded document was not found." });
+  if (!modelPath.startsWith(`${omlxModelsDirectory}${path.sep}`) || !modelPath.toLowerCase().includes("gemma-4-12")) {
+    return response.status(400).json({ error: "Select an installed Gemma 4 12B model." });
+  }
+  if (typeof prompt !== "string" || !prompt.trim()) {
+    return response.status(400).json({ error: "Enter an instruction for the document." });
+  }
+
+  response.status(200);
+  response.set({
+    "content-type": "application/x-ndjson; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    "x-content-type-options": "nosniff",
+  });
+  response.flushHeaders();
+  const workerArguments = [
+    "--model", modelPath,
+    "--document", upload.documentPath,
+    "--prompt", prompt,
+  ];
+  if (maxOutputTokens != null) workerArguments.push("--max-output-tokens", String(Math.max(1, Number(maxOutputTokens))));
+  if (reasoningEnabled) workerArguments.push("--reasoning");
+  if (reasoningEnabled && maxReasoningTokens != null) {
+    workerArguments.push("--max-reasoning-tokens", String(Math.max(1, Number(maxReasoningTokens))));
+  }
+  const worker = spawn(inferenceLauncher, workerArguments, { stdio: ["ignore", "pipe", "pipe"] });
+  worker.stdout.pipe(response, { end: false });
+  worker.stderr.on("data", (chunk) => console.error(chunk.toString()));
+  worker.on("error", (error) => {
+    response.write(`${JSON.stringify({ type: "error", message: error.message })}\n`);
+    response.end();
+  });
+  worker.on("close", async (exitCode) => {
+    if (exitCode && !response.writableEnded) {
+      response.write(`${JSON.stringify({ type: "error", message: `Inference worker exited with code ${exitCode}.` })}\n`);
+    }
+    response.end();
+    uploads.delete(uploadId);
+    await rm(upload.documentPath, { force: true });
+  });
+  response.on("close", () => {
+    if (!response.writableEnded) worker.kill("SIGTERM");
+  });
 });
 
 app.get("/api/runner", (_request, response) => response.json(runManager.snapshot()));

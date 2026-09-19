@@ -29,6 +29,23 @@ local model/run metadata and start, stop, or resume benchmarks. Use
 `HOST=127.0.0.1 npm run dev` to keep it local, and never expose it directly to
 the public internet. See [SECURITY.md](SECURITY.md) for details.
 
+## Gemma document workbench
+
+Start the viewer and open `http://localhost:5173/#inference` to run an installed
+Gemma 4 12B model against a local text file. The workbench streams the answer
+and plots tokens per second on the Y axis against live context tokens on the X
+axis for both prefill and decoding.
+Answers render as GitHub-flavored Markdown, while optional Gemma reasoning is
+streamed into a separate disclosure panel.
+
+The worker uses raw autoregressive MLX-LM generation without speculative
+decoding. It sets the MLX wired-memory limit to zero before and after model
+loading so macOS may compress or swap allocations under memory pressure.
+Output and reasoning budgets can be finite or unlimited. Unlimited generation
+continues until the model emits an end token, reaches its context limit, or the
+user stops the request. A finite reasoning budget is a hard stop when reached;
+it does not force the model to skip into its final-answer channel.
+
 ## Quick start with installed OMLX
 
 The included launcher uses the Python, MLX, `mlx-lm`, Transformers, and psutil versions packaged inside the globally installed `/Applications/oMLX.app`. It does not require an OMLX source checkout or a separate project environment:

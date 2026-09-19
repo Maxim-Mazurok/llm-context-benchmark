@@ -5,6 +5,7 @@ import {
   resumeBenchmark, startRunner, stopRunner,
 } from "./api.js";
 import MetricChart, { chartColor } from "./MetricChart.jsx";
+import { InferenceWorkbench } from "./InferenceWorkbench.jsx";
 
 function formatNumber(value, digits = 0) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -166,6 +167,7 @@ function RunLedger({ benchmarks, modelBenchmarks, metrics, details, ensureDetail
         <div className="eyebrow">Local inference field notes</div>
         <h1>Context Atlas</h1>
         <p className="lede">See where local models slow down, consume memory, and begin to swap as their live context grows.</p>
+        <a className="workbench-link" href="#inference">Open document workbench →</a>
       </header>
       <RunnerPanel models={models} runner={runner} onRunnerChange={onRunnerChange} onRefresh={onRefresh} />
       <ModelComparison
@@ -283,6 +285,7 @@ function DetailView({ benchmark, benchmarks, modelBenchmarks, metrics, details, 
 }
 
 export default function App() {
+  const [view, setView] = useState(() => location.hash === "#inference" ? "inference" : "benchmarks");
   const [benchmarks, setBenchmarks] = useState([]);
   const [modelBenchmarks, setModelBenchmarks] = useState([]);
   const [metrics, setMetrics] = useState({});
@@ -325,7 +328,10 @@ export default function App() {
     poll(); const timer = setInterval(poll, 2000); return () => clearInterval(timer);
   }, [refresh, selectedId]);
   useEffect(() => {
-    const onHashChange = () => setSelectedId(decodeURIComponent(location.hash.replace("#run=", "")) || null);
+    const onHashChange = () => {
+      setView(location.hash === "#inference" ? "inference" : "benchmarks");
+      setSelectedId(location.hash.startsWith("#run=") ? decodeURIComponent(location.hash.replace("#run=", "")) : null);
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -358,6 +364,8 @@ export default function App() {
 
   const selectRun = (id) => { location.hash = `run=${encodeURIComponent(id)}`; };
   const showList = () => { history.pushState(null, "", location.pathname); setSelectedId(null); };
+
+  if (view === "inference") return <InferenceWorkbench />;
 
   if (error) {
     return <main className="page-shell"><div className="error-state"><h1>Benchmark data could not be loaded</h1><p>{error}</p><button onClick={refresh}>Try loading again</button></div></main>;
