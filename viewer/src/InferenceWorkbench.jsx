@@ -11,7 +11,16 @@ import { Line } from "react-chartjs-2";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { fetchModels, streamInference, uploadInferenceDocument } from "./api.js";
+import {
+  fetchInferenceProviders,
+  fetchModels,
+  fetchUnslothModels,
+  startUnslothStudio,
+  streamInference,
+  uploadInferenceDocument,
+} from "./api.js";
+
+// cspell:words Unsloth unsloth
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip);
 
@@ -64,7 +73,14 @@ function SpeedChart({ title, points, color }) {
 }
 
 export function InferenceWorkbench() {
-  const [models, setModels] = useState([]);
+  const [providers, setProviders] = useState([{ id: "mlx-lm", name: "MLX-LM", installed: true, running: true }]);
+  const [provider, setProvider] = useState("mlx-lm");
+  const [localModels, setLocalModels] = useState([]);
+  const [unslothModels, setUnslothModels] = useState([]);
+  const [unslothEndpoint, setUnslothEndpoint] = useState("http://127.0.0.1:8888/v1");
+  const [unslothApiKey, setUnslothApiKey] = useState("");
+  const [providerMessage, setProviderMessage] = useState("");
+  const [localModelError, setLocalModelError] = useState("");
   const [model, setModel] = useState("");
   const [file, setFile] = useState(null);
   const [prompt, setPrompt] = useState("");
@@ -92,15 +108,52 @@ export function InferenceWorkbench() {
   const abortController = useRef(null);
   const deferredOutput = useDeferredValue(output);
   const deferredReasoning = useDeferredValue(reasoning);
+  const models = provider === "unsloth-studio" ? unslothModels : localModels;
+  const unslothProvider = providers.find((item) => item.id === "unsloth-studio");
 
   useEffect(() => {
-    fetchModels().then((payload) => {
-      const gemmaModels = (payload.models || []).filter((item) => /gemma-4.*12b/i.test(item.relativeName));
-      setModels(gemmaModels);
+    fetchModels().then((modelPayload) => {
+      const gemmaModels = (modelPayload.models || []).filter((item) => /gemma-4.*12b/i.test(item.relativeName));
+      setLocalModels(gemmaModels);
       setModel(gemmaModels[0]?.path || "");
+    }).catch((requestError) => setLocalModelError(requestError.message));
+    fetchInferenceProviders().then((providerPayload) => {
+      setProviders(providerPayload.providers || []);
+      const discoveredUnsloth = (providerPayload.providers || []).find((item) => item.id === "unsloth-studio");
+      if (discoveredUnsloth?.endpoint) setUnslothEndpoint(discoveredUnsloth.endpoint);
     }).catch((requestError) => setError(requestError.message));
     return () => abortController.current?.abort();
   }, []);
+
+  const selectProvider = (nextProvider) => {
+    setProvider(nextProvider);
+    setProviderMessage("");
+    const nextModels = nextProvider === "unsloth-studio" ? unslothModels : localModels;
+    setModel(nextModels[0]?.path || nextModels[0]?.id || "");
+  };
+
+  const launchUnsloth = async () => {
+    setProviderMessage("Starting Unsloth Studio…");
+    try {
+      const result = await startUnslothStudio(unslothEndpoint);
+      window.open(result.endpoint, "_blank", "noopener,noreferrer");
+      setProviderMessage("Studio launch requested. Load a model, create an API key, then refresh models here.");
+    } catch (requestError) {
+      setProviderMessage(requestError.message);
+    }
+  };
+
+  const refreshUnslothModels = async () => {
+    setProviderMessage("Connecting to Unsloth Studio…");
+    try {
+      const payload = await fetchUnslothModels(unslothEndpoint, unslothApiKey);
+      setUnslothModels(payload.models || []);
+      setModel(payload.models?.[0]?.id || "");
+      setProviderMessage(payload.models?.length ? `Found ${payload.models.length} available model${payload.models.length === 1 ? "" : "s"}.` : "Studio is running, but no model is loaded.");
+    } catch (requestError) {
+      setProviderMessage(requestError.message);
+    }
+  };
 
   const running = !["idle", "complete", "error", "stopped"].includes(phase);
   const submit = async (event) => {
@@ -116,8 +169,10 @@ export function InferenceWorkbench() {
       let currentPromptTokens = 0;
       await streamInference({
         uploadId,
+        provider,
         model,
         prompt,
+        ...(provider === "unsloth-studio" ? { endpoint: unslothEndpoint, apiKey: unslothApiKey } : {}),
         maxOutputTokens: outputUnlimited ? null : Number(maxOutputTokens),
         reasoningEnabled,
         maxReasoningTokens: reasoningEnabled && !reasoningUnlimited ? Number(maxReasoningTokens) : null,
@@ -160,23 +215,36 @@ export function InferenceWorkbench() {
   };
 
   return <main id="main-content" className="workbench-shell">
-    <nav className="workbench-nav"><a href="#">Context Atlas</a><span>Gemma document workbench</span></nav>
+    <nav className="workbench-nav"><a href="#">Context Atlas</a><span>Local document workbench</span></nav>
     <header className="workbench-header">
       <div className="eyebrow">Raw decoding · pageable memory</div>
       <h1>Read the whole thing.</h1>
-      <p>Attach a large text file, give Gemma one instruction, and watch context processing turn into streamed output.</p>
+      <p>Attach a large text file, give a local model one instruction, and watch context processing turn into streamed output.</p>
     </header>
 
     <form className="workbench-grid" onSubmit={submit}>
       <section className="document-controls">
+        <label>Provider<select value={provider} onChange={(event) => selectProvider(event.target.value)} disabled={running}>
+          {providers.map((item) => <option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed ? "" : " (not installed)"}</option>)}
+        </select></label>
+        {provider === "unsloth-studio" && <section className="provider-connection">
+          <div className="provider-state"><span className={`phase-dot ${unslothProvider?.running ? "phase-complete" : ""}`} />{unslothProvider?.running ? "Studio detected" : "Studio is not running"}</div>
+          <label>Endpoint<input type="url" value={unslothEndpoint} onChange={(event) => setUnslothEndpoint(event.target.value)} disabled={running} /></label>
+          <label>API key<input type="password" value={unslothApiKey} onChange={(event) => setUnslothApiKey(event.target.value)} placeholder="sk-unsloth-…" autoComplete="off" disabled={running} /></label>
+          <div className="provider-actions">
+            {!unslothProvider?.running && <button type="button" onClick={launchUnsloth}>Start Studio</button>}
+            <button type="button" onClick={refreshUnslothModels} disabled={running}>Refresh models</button>
+          </div>
+          {providerMessage && <small className="provider-message">{providerMessage}</small>}
+        </section>}
         <label className={`file-drop ${file ? "has-file" : ""}`}>
           <input type="file" accept="text/*,.txt,.md,.csv,.json,.jsonl,.log" onChange={(event) => setFile(event.target.files[0] || null)} />
           <strong>{file ? file.name : "Drop or choose a text file"}</strong>
           <span>{file ? `${numberFormatter.format(file.size / 1_048_576)} MiB` : "Text, Markdown, CSV, JSONL, or logs"}</span>
         </label>
         <label>Model<select value={model} onChange={(event) => setModel(event.target.value)} disabled={running}>
-          {!models.length && <option value="">No installed Gemma 4 12B model found</option>}
-          {models.map((item) => <option key={item.path} value={item.path}>{item.relativeName}</option>)}
+          {!models.length && <option value="">{provider === "unsloth-studio" ? "Refresh after loading a model in Studio" : "No installed Gemma 4 12B model found"}</option>}
+          {models.map((item) => <option key={item.path || item.id} value={item.path || item.id}>{item.relativeName || item.name}</option>)}
         </select></label>
         <label>Instruction<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Summarize the document and identify unresolved decisions." rows="7" /></label>
         <fieldset className="generation-options">
@@ -193,6 +261,7 @@ export function InferenceWorkbench() {
           <button type="submit" disabled={running || !file || !model || !prompt.trim()}>Run inference</button>
           {running && <button type="button" className="cancel-button" onClick={() => abortController.current?.abort()}>Stop</button>}
         </div>
+        {provider === "mlx-lm" && localModelError && <p className="runner-message">{localModelError}</p>}
         {error && <p className="runner-message">{error}</p>}
       </section>
 

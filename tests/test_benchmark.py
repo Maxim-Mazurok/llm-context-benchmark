@@ -9,8 +9,10 @@ from types import ModuleType
 
 import pytest
 
+from llm_context_benchmark.adapters import unsloth_llama_cpp
 from llm_context_benchmark.adapters.mlx_lm import MLXLMAdapter
 from llm_context_benchmark.adapters.mock import MockAdapter
+from llm_context_benchmark.adapters.unsloth_llama_cpp import UnslothLlamaCppAdapter
 from llm_context_benchmark.cli import (
     _apply_resume_settings,
     _strip_batch_arguments,
@@ -34,6 +36,54 @@ from llm_context_benchmark.useful_tasks import (
     load_workbench_observations,
     write_useful_task_bundle,
 )
+
+
+def test_unsloth_adapter_separates_native_prefill_and_streamed_decode(
+    monkeypatch,
+):
+    events = [
+        {"tokens": [101], "stop": False},
+        {"tokens": [102], "stop": False},
+        {
+            "tokens": [],
+            "stop": True,
+            "timings": {"cache_n": 8, "prompt_n": 3, "prompt_ms": 250},
+        },
+    ]
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception_information):
+            return False
+
+        def __iter__(self):
+            return iter(
+                [f"data: {json.dumps(event)}\n".encode() for event in events]
+            )
+
+    monkeypatch.setattr(
+        unsloth_llama_cpp,
+        "urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+    adapter = UnslothLlamaCppAdapter("model.gguf")
+    adapter._endpoint = "http://127.0.0.1:1234"
+    adapter._sequence_tokens = list(range(9))
+    callback_order = []
+
+    result = adapter.append_and_decode(
+        [10, 11],
+        2,
+        lambda: callback_order.append("prefill"),
+        lambda token, index, timestamp: callback_order.append((token, index)),
+    )
+
+    assert result.prefill_finished - result.prefill_started == pytest.approx(0.25)
+    assert result.cache_catchup_tokens == 1
+    assert result.generated_tokens == [101, 102]
+    assert callback_order == ["prefill", (101, 0), (102, 1)]
 
 
 def test_mtp_generator_disables_wired_memory(monkeypatch):

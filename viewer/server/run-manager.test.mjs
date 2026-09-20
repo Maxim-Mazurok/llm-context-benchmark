@@ -28,3 +28,24 @@ test("resume arguments include final context and maximum added swap", () => {
     ["--resume", "/runs/example", "--no-max-context", "--swap-stop-gib", "4"],
   );
 });
+
+test("Unsloth tasks select the persistent llama.cpp adapter", () => {
+  assert.deepEqual(
+    buildBenchmarkArguments({
+      provider: "unsloth-studio",
+      resume: false,
+      model: { path: "/models/example.gguf" },
+      output: "/runs/example",
+      cap: 32768,
+      speculative: false,
+      swapStopGib: 4,
+    }),
+    [
+      "--model", "/models/example.gguf",
+      "--output", "/runs/example",
+      "--adapter", "unsloth-llama.cpp",
+      "--max-context", "32768",
+      "--swap-stop-gib", "4",
+    ],
+  );
+});

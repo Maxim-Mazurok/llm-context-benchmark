@@ -1,3 +1,5 @@
+// cspell:words Unsloth unsloth
+
 async function request(path) {
   const response = await fetch(path);
   if (!response.ok) {
@@ -10,6 +12,8 @@ async function request(path) {
 export const fetchBenchmarks = () => request("/api/benchmarks");
 export const fetchBenchmark = (id) => request(`/api/benchmarks/${encodeURIComponent(id)}`);
 export const fetchModels = () => request("/api/models");
+export const fetchUnslothBenchmarkModels = () => request("/api/benchmark/providers/unsloth-studio/models");
+export const fetchInferenceProviders = () => request("/api/inference/providers");
 export const fetchRunner = () => request("/api/runner");
 
 export function uploadInferenceDocument(file, onProgress) {
@@ -72,3 +76,5 @@ async function post(path, body = {}) {
 export const startRunner = (options) => post("/api/runner/start", options);
 export const stopRunner = () => post("/api/runner/stop");
 export const resumeBenchmark = (id, maxContext, swapStopGib) => post(`/api/benchmarks/${encodeURIComponent(id)}/resume`, { maxContext, swapStopGib });
+export const fetchUnslothModels = (endpoint, apiKey) => post("/api/inference/providers/unsloth-studio/models", { endpoint, apiKey });
+export const startUnslothStudio = (endpoint) => post("/api/inference/providers/unsloth-studio/start", { endpoint });

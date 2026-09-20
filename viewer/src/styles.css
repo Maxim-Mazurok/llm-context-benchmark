@@ -94,7 +94,15 @@ h1 {
 .document-controls { display: grid; gap: 1.2rem; align-content: start; padding: 2rem clamp(1rem, 3vw, 3rem) 2rem 0; border-right: 0.0625rem solid var(--ink); }
 .document-controls > label { display: grid; gap: 0.35rem; color: var(--muted); font-size: 0.76rem; font-weight: 700; }
 .document-controls select, .document-controls textarea, .document-controls input[type="number"] { width: 100%; border: 0.0625rem solid var(--rule); border-radius: 0; background: var(--sheet); padding: 0.75rem; }
+.document-controls input[type="url"], .document-controls input[type="password"] { width: 100%; min-height: 2.75rem; border: 0.0625rem solid var(--rule); border-radius: 0; background: var(--sheet); padding: 0.75rem; }
 .document-controls textarea { resize: vertical; color: var(--ink); font: 1rem/1.5 Georgia, serif; }
+.provider-connection { display: grid; gap: 0.8rem; border-block: 0.0625rem solid var(--rule); padding: 1rem 0; }
+.provider-connection label { display: grid; gap: 0.3rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; }
+.provider-state { display: flex; align-items: center; gap: 0.5rem; font-size: 0.76rem; font-weight: 700; }
+.provider-actions { display: flex; gap: 0.6rem; }
+.provider-actions button { min-height: 2.6rem; border: 0.0625rem solid var(--ink); background: transparent; padding: 0.5rem 0.75rem; cursor: pointer; }
+.provider-actions button:first-child { background: var(--ink); color: var(--sheet); }
+.provider-message { color: var(--muted); font-weight: 500; }
 .generation-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem 1rem; border: 0; border-top: 0.0625rem solid var(--rule); margin: 0; padding: 1rem 0 0; }
 .generation-options legend { padding: 0 0.5rem 0 0; color: var(--muted); font-size: 0.76rem; font-weight: 700; }
 .generation-options > label:not(.check-option) { display: grid; grid-column: 1 / -1; gap: 0.3rem; color: var(--muted); font-size: 0.72rem; }
@@ -167,6 +175,11 @@ h1 {
 .runner-body.is-open { grid-template-rows: 1fr; }
 .runner-body-inner { overflow: hidden; }
 .runner-body.is-open .runner-body-inner { padding: 0 0 1.5rem; }
+.runner-provider { display: grid; grid-template-columns: repeat(3, minmax(12rem, 1fr)); gap: 1rem; align-items: end; padding: 1rem 0; }
+.runner-provider > label { display: grid; gap: 0.3rem; color: var(--muted); font-size: 0.76rem; font-weight: 650; }
+.runner-provider input { width: 100%; min-height: 2.75rem; border: 0.0625rem solid var(--rule); background: var(--sheet); padding: 0.55rem 0.65rem; }
+.runner-provider .provider-actions { align-self: end; }
+.provider-capability { margin: 0; border-left: 0.18rem solid var(--accent); padding-left: 0.8rem; color: var(--muted); font-size: 0.78rem; }
 .runner-toolbar { display: flex; gap: 0.8rem; align-items: center; padding: 0.7rem 0; color: var(--muted); font-size: 0.78rem; }
 .runner-toolbar button { border: 0; border-bottom: 0.0625rem solid currentColor; background: transparent; padding: 0; cursor: pointer; color: var(--accent-dark); }
 .model-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 20rem; overflow: auto; border-block: 0.0625rem solid var(--rule); }
@@ -376,6 +389,7 @@ input[type="text"], .search-field input, select {
   .detail-header { grid-template-columns: 1fr; }
   .run-facts { max-width: 38rem; }
   .run-options { grid-template-columns: 1fr 1fr; }
+  .runner-provider { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 44rem) {
@@ -393,7 +407,7 @@ input[type="text"], .search-field input, select {
   .chart-frame { margin-inline: -0.35rem; padding: 0.25rem; }
   .model-picker { grid-template-columns: 1fr; }
   .model-picker label:nth-child(odd) { border-right: 0; margin-right: 0; }
-  .run-options, .resume-strip { grid-template-columns: 1fr; }
+  .run-options, .runner-provider, .resume-strip { grid-template-columns: 1fr; }
   .active-run { align-items: start; flex-direction: column; }
   .comparison-heading { display: grid; }
   .comparison-actions { justify-content: start; }

@@ -2,7 +2,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,16 @@ import express from "express";
 
 import { buildModelBenchmarks, getBenchmark, listBenchmarks, METRICS } from "./data.mjs";
 import { RunManager } from "./run-manager.mjs";
+import {
+  defaultUnslothEndpoint,
+  discoverUnslothBenchmarkModels,
+  discoverUnslothEndpoint,
+  listUnslothModels,
+  probeUnslothStudio,
+  startUnslothStudio,
+  streamUnslothCompletion,
+  unslothInstallation,
+} from "./unsloth-provider.mjs";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDir, "../..");
@@ -22,6 +32,8 @@ const launcher = path.join(projectRoot, "bin", "llm-context-bench");
 const inferenceLauncher = path.join(projectRoot, "bin", "llm-context-infer");
 const uploadDirectory = path.join(os.tmpdir(), "llm-context-benchmark-uploads");
 const omlxModelsDirectory = path.join(os.homedir(), ".omlx", "models");
+const omlxApplicationPath = process.env.OMLX_APP_PATH || "/Applications/oMLX.app";
+const omlxRuntimeInstalled = existsSync(path.join(omlxApplicationPath, "Contents", "Resources"));
 const uploads = new Map();
 const runManager = new RunManager({ launcher, runsDir });
 const execFileAsync = promisify(execFile);
@@ -36,10 +48,68 @@ app.get("/api/health", (_request, response) => {
 });
 
 app.get("/api/models", async (_request, response, next) => {
+  if (!omlxRuntimeInstalled) {
+    return response.json({
+      models: [],
+      excluded: [],
+      unavailableReason: `Could not find the oMLX runtime at ${omlxApplicationPath}.`,
+    });
+  }
   try {
     const { stdout } = await execFileAsync(launcher, ["--list-omlx-models", "--json"], { maxBuffer: 10 * 1024 * 1024 });
     response.json(JSON.parse(stdout));
   } catch (error) { next(error); }
+});
+
+app.get("/api/benchmark/providers/unsloth-studio/models", (_request, response) => {
+  const installation = unslothInstallation();
+  response.json({
+    models: installation.benchmarkInstalled ? discoverUnslothBenchmarkModels() : [],
+    unavailableReason: installation.benchmarkInstalled
+      ? null
+      : `Could not find Unsloth llama-server at ${installation.serverPath}.`,
+  });
+});
+
+app.get("/api/inference/providers", async (_request, response) => {
+  const installation = unslothInstallation();
+  const configuredEndpoint = process.env.UNSLOTH_ENDPOINT || defaultUnslothEndpoint;
+  const endpoint = installation.installed
+    ? await discoverUnslothEndpoint(configuredEndpoint)
+    : configuredEndpoint;
+  response.json({
+    providers: [
+      { id: "mlx-lm", name: "MLX-LM", installed: omlxRuntimeInstalled, running: omlxRuntimeInstalled },
+      {
+        id: "unsloth-studio",
+        name: "Unsloth Studio",
+        endpoint,
+        installed: installation.installed,
+        benchmarkInstalled: installation.benchmarkInstalled,
+        running: installation.installed && await probeUnslothStudio(endpoint),
+      },
+    ],
+  });
+});
+
+app.post("/api/inference/providers/unsloth-studio/start", (request, response, next) => {
+  try {
+    response.status(202).json(startUnslothStudio(request.body.endpoint));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/inference/providers/unsloth-studio/models", async (request, response, next) => {
+  try {
+    const models = await listUnslothModels({
+      endpoint: request.body.endpoint,
+      apiKey: request.body.apiKey || process.env.UNSLOTH_API_KEY,
+    });
+    response.json({ models });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/inference/files", async (request, response, next) => {
@@ -56,16 +126,94 @@ app.post("/api/inference/files", async (request, response, next) => {
   }
 });
 
-app.post("/api/inference/generate", (request, response) => {
-  const { uploadId, model, prompt, maxOutputTokens, reasoningEnabled, maxReasoningTokens } = request.body;
+app.post("/api/inference/generate", async (request, response, next) => {
+  const { provider = "mlx-lm", uploadId, model, prompt, maxOutputTokens, reasoningEnabled, maxReasoningTokens } = request.body;
   const upload = uploads.get(uploadId);
-  const modelPath = typeof model === "string" ? path.resolve(model) : "";
   if (!upload) return response.status(404).json({ error: "Uploaded document was not found." });
-  if (!modelPath.startsWith(`${omlxModelsDirectory}${path.sep}`) || !modelPath.toLowerCase().includes("gemma-4-12")) {
-    return response.status(400).json({ error: "Select an installed Gemma 4 12B model." });
-  }
   if (typeof prompt !== "string" || !prompt.trim()) {
     return response.status(400).json({ error: "Enter an instruction for the document." });
+  }
+  if (provider === "unsloth-studio") {
+    if (typeof model !== "string" || !model) return response.status(400).json({ error: "Select an Unsloth model." });
+    response.status(200);
+    response.set({
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      "x-content-type-options": "nosniff",
+    });
+    response.flushHeaders();
+    const abortController = new AbortController();
+    response.on("close", () => abortController.abort());
+    const writeEvent = (event) => response.write(`${JSON.stringify(event)}\n`);
+    let generatedTokens = 0;
+    let reasoningTokens = 0;
+    let outputTokens = 0;
+    let promptReported = false;
+    let finishReason = "model_stop";
+    const decodeStarted = performance.now();
+    try {
+      writeEvent({ type: "status", phase: "connecting" });
+      const document = await readFile(upload.documentPath, "utf8");
+      const requestBody = {
+        model,
+        messages: [{ role: "user", content: `${prompt.trim()}\n\n<document>\n${document}\n</document>` }],
+        stream: true,
+        stream_options: { include_usage: true },
+      };
+      if (maxOutputTokens != null) requestBody.max_tokens = Math.max(1, Number(maxOutputTokens));
+      if (reasoningEnabled && maxReasoningTokens != null) requestBody.reasoning_budget = Math.max(1, Number(maxReasoningTokens));
+      await streamUnslothCompletion({
+        endpoint: request.body.endpoint,
+        apiKey: request.body.apiKey || process.env.UNSLOTH_API_KEY,
+        requestBody,
+        signal: abortController.signal,
+      }, (chunk) => {
+        const usage = chunk.usage || {};
+        const choice = chunk.choices?.[0] || {};
+        const reasoningSegment = choice.delta?.reasoning_content || choice.delta?.reasoning || "";
+        const answerSegment = choice.delta?.content || "";
+        if (!promptReported && (reasoningSegment || answerSegment)) {
+          writeEvent({ type: "prompt", totalTokens: usage.prompt_tokens || 0 });
+          promptReported = true;
+        }
+        if (reasoningSegment || answerSegment) {
+          generatedTokens += 1;
+          if (reasoningSegment) reasoningTokens += 1;
+          if (answerSegment) outputTokens += 1;
+          const elapsedSeconds = Math.max((performance.now() - decodeStarted) / 1_000, 1e-9);
+          writeEvent({
+            type: "decode",
+            stage: reasoningSegment ? "reasoning" : "answer",
+            reasoning: reasoningSegment,
+            token: answerSegment,
+            generatedTokens,
+            reasoningTokens,
+            outputTokens,
+            tokensPerSecond: generatedTokens / elapsedSeconds,
+            elapsedSeconds,
+            etaSeconds: null,
+          });
+        }
+        if (Number.isFinite(usage.completion_tokens)) generatedTokens = usage.completion_tokens;
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+      });
+      writeEvent({ type: "complete", generatedTokens, reasoningTokens, outputTokens, finishReason });
+      response.end();
+    } catch (error) {
+      if (!response.writableEnded && !abortController.signal.aborted) {
+        writeEvent({ type: "error", message: error.message });
+        response.end();
+      }
+    } finally {
+      uploads.delete(uploadId);
+      await rm(upload.documentPath, { force: true });
+    }
+    return;
+  }
+  if (provider !== "mlx-lm") return response.status(400).json({ error: "Select a supported inference provider." });
+  const modelPath = typeof model === "string" ? path.resolve(model) : "";
+  if (!modelPath.startsWith(`${omlxModelsDirectory}${path.sep}`) || !modelPath.toLowerCase().includes("gemma-4-12")) {
+    return response.status(400).json({ error: "Select an installed Gemma 4 12B model." });
   }
 
   response.status(200);

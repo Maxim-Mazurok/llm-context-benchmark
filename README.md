@@ -1,5 +1,7 @@
 # LLM Context Benchmark
 
+<!-- cspell:words Unsloth -->
+
 Find the largest *usable* context for a local LLM on Apple Silicon, not merely the largest prompt that allocates successfully.
 
 The benchmark keeps one model and one KV cache alive while it repeatedly:
@@ -17,7 +19,8 @@ The final sustained probe is guaranteed when the endpoint is known in advance, s
 ## Requirements and safety
 
 Real-model benchmarking targets Apple Silicon Macs and requires either an
-installed OMLX application or a standalone Python 3.11+ environment with MLX.
+installed OMLX application, or Unsloth Studio with its bundled llama.cpp runtime
+and a Python 3.11+ environment managed by `uv`.
 Long-context runs intentionally consume substantial unified memory and may
 cause compression, swap activity, system slowdown, or model allocation
 failure. Save important work before starting a large run and choose an
@@ -29,14 +32,57 @@ local model/run metadata and start, stop, or resume benchmarks. Use
 `HOST=127.0.0.1 npm run dev` to keep it local, and never expose it directly to
 the public internet. See [SECURITY.md](SECURITY.md) for details.
 
-## Gemma document workbench
+## Local document workbench
 
 Start the viewer and open `http://localhost:5173/#inference` to run an installed
-Gemma 4 12B model against a local text file. The workbench streams the answer
-and plots tokens per second on the Y axis against live context tokens on the X
-axis for both prefill and decoding.
+Gemma 4 12B model through MLX-LM, or a model loaded in Unsloth Studio, against a
+local text file. Choose the provider in the workbench. The workbench streams the
+answer and plots tokens per second on the Y axis against live context tokens on
+the X axis for both prefill and decoding.
 Answers render as GitHub-flavored Markdown, while optional Gemma reasoning is
 streamed into a separate disclosure panel.
+
+For Unsloth Studio:
+
+1. Select **Unsloth Studio** and use **Start Studio** if it is not running.
+2. In Studio, load a model and create an API key under **Settings > API**.
+3. Enter that key in the workbench and select **Refresh models**.
+
+The default endpoint is `http://127.0.0.1:8888/v1`; only loopback HTTP endpoints
+are accepted. Set `UNSLOTH_ENDPOINT` to change the default, or
+`UNSLOTH_API_KEY` to supply the key to the viewer process instead of entering it
+in the browser. Browser-entered keys are sent only with model discovery and
+inference requests and are not persisted by this application. OpenAI streaming
+provides exact completion usage at the end of a request; live Unsloth decode
+rates are interim estimates based on streamed chunks.
+
+## Benchmark with Unsloth
+
+The main dashboard discovers GGUF models downloaded by Unsloth under the local
+Hugging Face cache. Select **Unsloth Studio**, choose one or more models, and
+start the queue without an API key. Each run launches Unsloth's bundled
+`llama-server` on loopback with one private slot and prompt caching enabled.
+
+The adapter sends exact token IDs and retains one continuous sequence across
+cycles. Prefill throughput comes from llama.cpp's native `timings.prompt_ms`;
+decode throughput comes from timestamps on exact streamed token IDs. The final
+event's `cache_n` and `prompt_n` values account for cached-prefix reuse and the
+one-token cache catch-up between cycles.
+
+Unlike MLX-LM's dynamically growing cache, llama.cpp allocates the configured KV
+cache when the server starts. Memory curves therefore reflect llama.cpp's
+preallocated runtime, while throughput and maximum usable context remain
+measured incrementally. Unload the same model from Studio before benchmarking to
+avoid keeping two copies of its weights resident.
+
+The equivalent command-line invocation is:
+
+```bash
+./bin/llm-context-bench \
+  --adapter unsloth-llama.cpp \
+  --model ~/.cache/huggingface/hub/models--ORG--MODEL/snapshots/REVISION/model.gguf \
+  --max-context 32768
+```
 
 The worker uses raw autoregressive MLX-LM generation without speculative
 decoding. It sets the MLX wired-memory limit to zero before and after model
