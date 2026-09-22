@@ -6,8 +6,9 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
-from .adapters import MLXLMAdapter, MockAdapter
+from .adapters import Adapter, LlamaServerAdapter, MLXLMAdapter, MockAdapter
 from .model_discovery import LocalModel, discover_omlx_models, safe_model_slug
 from .runner import BenchmarkConfig, BenchmarkRunner
 from .speculative import (
@@ -24,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Measure maximum usable context with one continuously growing KV cache.",
     )
     parser.add_argument(
-        "--model", help="Hugging Face model id or local MLX model directory"
+        "--model", help="Model id, local MLX model directory, or server model alias"
     )
     parser.add_argument(
         "--resume",
@@ -106,7 +107,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Maximum speculative draft depth (default: OMLX setting, otherwise 3)",
     )
-    parser.add_argument("--adapter", choices=("mlx-lm", "mock"), default="mlx-lm")
+    parser.add_argument(
+        "--adapter", choices=("mlx-lm", "llama-server", "mock"), default="mlx-lm"
+    )
+    parser.add_argument(
+        "--server-url",
+        default="http://127.0.0.1:8080",
+        help="llama-server base URL when --adapter llama-server is used",
+    )
     parser.add_argument(
         "--serve-run",
         type=Path,
@@ -196,6 +204,8 @@ def _apply_resume_settings(
         args.model = metadata.get("model")
     if not _option_present(raw_argv, "--adapter") and metadata.get("adapter"):
         args.adapter = metadata["adapter"]
+    if not _option_present(raw_argv, "--server-url") and metadata.get("server_url"):
+        args.server_url = metadata["server_url"]
     config_options = {
         "chunk_tokens": "--chunk-tokens",
         "short_decode_tokens": "--short-decode-tokens",
@@ -583,8 +593,17 @@ def main(argv: list[str] | None = None) -> int:
     output = (args.output or root / "runs" / stamp).expanduser().resolve()
     seed_text = args.seed_text_file.read_text() if args.seed_text_file else None
     if args.adapter == "mock":
-        adapter = MockAdapter(
-            args.model or "mock", context_limit=args.max_context or 100_000
+        adapter = cast(
+            Adapter,
+            MockAdapter(
+                args.model or "mock", context_limit=args.max_context or 100_000
+            ),
+        )
+    elif args.adapter == "llama-server":
+        adapter = LlamaServerAdapter(
+            args.model,
+            server_url=args.server_url,
+            seed_text=seed_text,
         )
     else:
         adapter = MLXLMAdapter(

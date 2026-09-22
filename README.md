@@ -38,6 +38,26 @@ axis for both prefill and decoding.
 Answers render as GitHub-flavored Markdown, while optional Gemma reasoning is
 streamed into a separate disclosure panel.
 
+## Distributed llama.cpp RPC
+
+Run the benchmark against a local `llama-server` whose model and KV cache are
+split across the Mac and remote CUDA or CPU workers:
+
+```bash
+uv run llm-context-bench \
+  --adapter llama-server \
+  --server-url http://127.0.0.1:8080 \
+  --max-context 65536
+```
+
+The repository includes pinned macOS and Windows build scripts, worker and host
+launchers, a recommended Qwen3.6 35B-A3B GGUF, firewall guidance, and a
+Mac-only comparison path. See [Distributed llama.cpp RPC](docs/llama-rpc.md).
+
+RPC has no authentication or encryption and must remain on a trusted private
+network. The HTTP benchmark records Mac host memory; remote GPU telemetry is not
+yet collected.
+
 The worker uses raw autoregressive MLX-LM generation without speculative
 decoding. It sets the MLX wired-memory limit to zero before and after model
 loading so macOS may compress or swap allocations under memory pressure.
