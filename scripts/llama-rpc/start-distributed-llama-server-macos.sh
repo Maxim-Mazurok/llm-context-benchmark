@@ -19,6 +19,45 @@ rpc_port="${LLAMA_RPC_PORT:-50052}"
 rpc_subnet="${LLAMA_RPC_SUBNET:-}"
 rpc_scan_parallelism="${LLAMA_RPC_SCAN_PARALLELISM:-64}"
 use_local_server=false
+mtp_enabled=false
+mtp_blocks=3
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --local)
+            use_local_server=true
+            shift
+            ;;
+        --mtp)
+            mtp_enabled=true
+            shift
+            ;;
+        --mtp-blocks)
+            if [[ $# -lt 2 ]]; then
+                printf '%s requires a value.\n' "$1" >&2
+                exit 1
+            fi
+            mtp_blocks="$2"
+            shift 2
+            ;;
+        --help|-h)
+            printf 'Usage: %s [--local] [--mtp] [--mtp-blocks NUMBER]\n' "${0##*/}"
+            printf '  --local              Run on the Mac only without RPC discovery.\n'
+            printf '  --mtp                Enable MTP speculative decoding.\n'
+            printf '  --mtp-blocks NUMBER  Set MTP draft blocks (default: 3).\n'
+            exit 0
+            ;;
+        *)
+            printf 'Unknown argument: %s\n' "$1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! "$mtp_blocks" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'MTP blocks must be a positive integer: %s\n' "$mtp_blocks" >&2
+    exit 1
+fi
 
 discover_rpc_servers() {
     local default_interface
@@ -84,7 +123,7 @@ if [[ ! -x "$llama_server_path" ]]; then
     printf 'Run setup-llama-cpp-macos.sh first.\n' >&2
     exit 1
 fi
-if [[ -z "$rpc_servers" ]]; then
+if [[ -z "$rpc_servers" && "$use_local_server" == false ]]; then
     discover_rpc_servers
 fi
 if [[ -z "$rpc_servers" && "$use_local_server" == false ]]; then
@@ -124,12 +163,16 @@ arguments=(
     --cache-type-k q8_0
     --cache-type-v q8_0
     --parallel 1
-    --host 127.0.0.1
+    --host 0.0.0.0
     --port "$server_port"
     --metrics
     --jinja
     --no-mmproj
 )
+
+if [[ "$mtp_enabled" == true ]]; then
+    arguments+=(--spec-type draft-mtp --spec-draft-n-max "$mtp_blocks")
+fi
 
 if [[ "$use_local_server" == true ]]; then
     arguments+=(--n-gpu-layers all --alias mac-local)

@@ -168,8 +168,11 @@ Then compare identical model, context, cache types, and benchmark arguments.
 Start distributed mode for one run and Mac-only mode for the other:
 
 ```bash
-./scripts/llama-rpc/start-local-llama-server-macos.sh
+./scripts/llama-rpc/start-distributed-llama-server-macos.sh --local
 ```
+
+Add `--mtp` to enable MTP speculative decoding. It uses three draft blocks by
+default; override that with `--mtp-blocks NUMBER`.
 
 The adapter keeps one exact token sequence and asks llama-server to reuse its
 prompt cache. Run metadata records adapter, server URL, model alias, and context
