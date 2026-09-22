@@ -13,20 +13,41 @@ resolve_llama_model_selection() {
     fi
 
     local discovered_model_path
+    local discovered_model_identifier
+    local existing_model_identifier
+    local hugging_face_cache_directory
+    local is_duplicate_model
     local model_directory
     local selected_model
+    local -a discovered_model_identifiers=()
     local -a discovered_model_paths=()
+    hugging_face_cache_directory="${HF_HUB_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub}"
     local -a model_directories=(
         "$HOME/.omlx/models"
         "$HOME/.lmstudio/models"
+        "$hugging_face_cache_directory"
     )
 
     while IFS= read -r discovered_model_path; do
+        discovered_model_identifier="$(stat -f '%d:%i' "$discovered_model_path")"
+        is_duplicate_model=false
+        if (( ${#discovered_model_identifiers[@]} > 0 )); then
+            for existing_model_identifier in "${discovered_model_identifiers[@]}"; do
+                if [[ "$existing_model_identifier" == "$discovered_model_identifier" ]]; then
+                    is_duplicate_model=true
+                    break
+                fi
+            done
+        fi
+        if [[ "$is_duplicate_model" == true ]]; then
+            continue
+        fi
+        discovered_model_identifiers+=("$discovered_model_identifier")
         discovered_model_paths+=("$discovered_model_path")
     done < <(
         for model_directory in "${model_directories[@]}"; do
             if [[ -d "$model_directory" ]]; then
-                find "$model_directory" -type f -name '*.gguf'
+                find -L "$model_directory" -type f -name '*.gguf'
             fi
         done | sort
     )

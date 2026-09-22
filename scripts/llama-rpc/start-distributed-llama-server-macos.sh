@@ -18,6 +18,7 @@ microbatch_size="${LLAMA_MICROBATCH_SIZE:-128}"
 rpc_port="${LLAMA_RPC_PORT:-50052}"
 rpc_subnet="${LLAMA_RPC_SUBNET:-}"
 rpc_scan_parallelism="${LLAMA_RPC_SCAN_PARALLELISM:-64}"
+use_local_server=false
 
 discover_rpc_servers() {
     local default_interface
@@ -63,7 +64,11 @@ discover_rpc_servers() {
     done
 
     if [[ -t 0 ]]; then
-        read -r -p 'Use all discovered workers? [Y/n] ' use_discovered_servers
+        read -r -p 'Use all discovered workers? [Y/n/x local-only] ' use_discovered_servers
+        if [[ "$use_discovered_servers" =~ ^[Xx]$ ]]; then
+            use_local_server=true
+            return
+        fi
         if [[ "$use_discovered_servers" =~ ^[Nn]$ ]]; then
             return
         fi
@@ -82,7 +87,7 @@ fi
 if [[ -z "$rpc_servers" ]]; then
     discover_rpc_servers
 fi
-if [[ -z "$rpc_servers" ]]; then
+if [[ -z "$rpc_servers" && "$use_local_server" == false ]]; then
     if [[ ! -t 0 ]]; then
         printf 'Set LLAMA_RPC_SERVERS or LLAMA_RPC_SUBNET to locate workers.\n' >&2
         exit 1
@@ -93,26 +98,26 @@ if [[ -z "$rpc_servers" ]]; then
     done
 fi
 
-rpc_server_separators="${rpc_servers//[^,]/}"
-rpc_server_count=$(( ${#rpc_server_separators} + 1 ))
-if [[ "$tensor_split" == 'auto' ]]; then
-    tensor_split=
-elif [[ -z "$tensor_split" && "$rpc_server_count" -eq 2 ]]; then
-    tensor_split='1,1,1.1'
-fi
-if [[ -z "$fit_target" ]]; then
-    fit_target=
-    for ((i = 0; i < rpc_server_count; i++)); do
-        fit_target+="${fit_target:+,}512"
-    done
-    fit_target+=,8192
+if [[ "$use_local_server" == false ]]; then
+    rpc_server_separators="${rpc_servers//[^,]/}"
+    rpc_server_count=$(( ${#rpc_server_separators} + 1 ))
+    if [[ "$tensor_split" == 'auto' ]]; then
+        tensor_split=
+    elif [[ -z "$tensor_split" && "$rpc_server_count" -eq 2 ]]; then
+        tensor_split='1,1,1.1'
+    fi
+    if [[ -z "$fit_target" ]]; then
+        fit_target=
+        for ((i = 0; i < rpc_server_count; i++)); do
+            fit_target+="${fit_target:+,}512"
+        done
+        fit_target+=,8192
+    fi
 fi
 
 resolve_llama_model_selection
 
 arguments=(
-    --rpc "$rpc_servers"
-    --split-mode layer
     --ctx-size "$context_size"
     --batch-size "$batch_size"
     --ubatch-size "$microbatch_size"
@@ -124,14 +129,15 @@ arguments=(
     --metrics
     --jinja
     --no-mmproj
-    --alias distributed-local
 )
 
-if [[ -n "$tensor_split" ]]; then
+if [[ "$use_local_server" == true ]]; then
+    arguments+=(--n-gpu-layers all --alias mac-local)
+elif [[ -n "$tensor_split" ]]; then
     printf 'Using RPC-first tensor split %s; monitor dedicated and shared GPU memory.\n' "$tensor_split" >&2
-    arguments+=(--fit off --tensor-split "$tensor_split")
+    arguments+=(--rpc "$rpc_servers" --split-mode layer --fit off --tensor-split "$tensor_split" --alias distributed-local)
 else
-    arguments+=(--fit on --fit-target "$fit_target")
+    arguments+=(--rpc "$rpc_servers" --split-mode layer --fit on --fit-target "$fit_target" --alias distributed-local)
 fi
 
 if [[ -n "$model_path" ]]; then
