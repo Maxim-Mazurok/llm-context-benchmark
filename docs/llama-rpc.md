@@ -73,14 +73,26 @@ host.
 
 ## 3. Start distributed inference on the Mac
 
-Launch and enter the Dell's private address when prompted:
+Launch without configuring the Dell's address:
 
 ```bash
 ./scripts/llama-rpc/start-distributed-llama-server-macos.sh
 ```
 
-For noninteractive use, or to skip the address prompt, set
-`LLAMA_RPC_SERVERS` first:
+When `LLAMA_RPC_SERVERS` is unset, the launcher scans port 50052 across the
+Mac's current IPv4 `/24` subnet, lists reachable workers, and offers to use all
+of them. If the subnet cannot be detected, it scans `192.168.0.1-254`. Override
+the scan range or port when needed:
+
+```bash
+export LLAMA_RPC_SUBNET='192.168.1'
+export LLAMA_RPC_PORT=50052
+```
+
+The scan detects any TCP service listening on that port; the subsequent
+llama.cpp connection verifies that it is a compatible RPC worker. If no worker
+is found, an interactive launch asks for comma-separated addresses manually.
+For noninteractive use, or to skip discovery, set `LLAMA_RPC_SERVERS` first:
 
 ```bash
 export LLAMA_RPC_SERVERS='192.168.0.20:50052'

@@ -24,9 +24,7 @@ for candidate in "$resources_path"/Python/framework-mlx-base/lib/python*/site-pa
 done
 
 if [ -z "$python_path" ] || [ -z "$mlx_packages_path" ]; then
-    echo "Could not find the installed oMLX runtime at: $omlx_app_path" >&2
-    echo "Install oMLX.app in /Applications or set OMLX_APP_PATH." >&2
-    exit 1
+    exec uv run --frozen --project "$project_path" python -m llm_context_benchmark "$@"
 fi
 
 if [ -n "${PYTHONPATH:-}" ]; then

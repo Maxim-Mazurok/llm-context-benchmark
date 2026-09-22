@@ -12,6 +12,63 @@ hugging_face_repository="${LLAMA_HUGGING_FACE_REPOSITORY:-}"
 context_size="${LLAMA_CONTEXT_SIZE:-65536}"
 server_port="${LLAMA_SERVER_PORT:-8080}"
 tensor_split="${LLAMA_TENSOR_SPLIT:-}"
+rpc_port="${LLAMA_RPC_PORT:-50052}"
+rpc_subnet="${LLAMA_RPC_SUBNET:-}"
+
+discover_rpc_servers() {
+    local default_interface
+    local discovered_address
+    local local_address
+    local use_discovered_servers
+    local -a discovered_addresses=()
+
+    if ! command -v nc >/dev/null 2>&1; then
+        return
+    fi
+
+    if [[ -z "$rpc_subnet" ]]; then
+        default_interface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
+        if [[ -n "$default_interface" ]]; then
+            local_address="$(ipconfig getifaddr "$default_interface" 2>/dev/null || true)"
+            if [[ "$local_address" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+                rpc_subnet="${BASH_REMATCH[1]}"
+            fi
+        fi
+    fi
+    rpc_subnet="${rpc_subnet:-192.168.0}"
+
+    printf 'Scanning %s.1-254 on RPC port %s...\n' "$rpc_subnet" "$rpc_port" >&2
+    while IFS= read -r discovered_address; do
+        discovered_addresses+=("$discovered_address")
+    done < <(
+        seq 1 254 |
+            xargs -P 32 -I '{}' sh -c \
+                'nc -z -w 1 "$1.{}" "$2" >/dev/null 2>&1 && printf "%s.{}\n" "$1"' \
+                sh "$rpc_subnet" "$rpc_port" |
+            sort -t . -k 4,4n
+    )
+
+    if (( ${#discovered_addresses[@]} == 0 )); then
+        printf 'No RPC workers found.\n' >&2
+        return
+    fi
+
+    printf 'Discovered RPC workers:\n' >&2
+    for discovered_address in "${discovered_addresses[@]}"; do
+        printf '  %s:%s\n' "$discovered_address" "$rpc_port" >&2
+    done
+
+    if [[ -t 0 ]]; then
+        read -r -p 'Use all discovered workers? [Y/n] ' use_discovered_servers
+        if [[ "$use_discovered_servers" =~ ^[Nn]$ ]]; then
+            return
+        fi
+    fi
+
+    for discovered_address in "${discovered_addresses[@]}"; do
+        rpc_servers+="${rpc_servers:+,}${discovered_address}:${rpc_port}"
+    done
+}
 
 if [[ ! -x "$llama_server_path" ]]; then
     printf 'llama-server not found: %s\n' "$llama_server_path" >&2
@@ -19,8 +76,11 @@ if [[ ! -x "$llama_server_path" ]]; then
     exit 1
 fi
 if [[ -z "$rpc_servers" ]]; then
+    discover_rpc_servers
+fi
+if [[ -z "$rpc_servers" ]]; then
     if [[ ! -t 0 ]]; then
-        printf 'Set LLAMA_RPC_SERVERS to worker addresses, for example 192.168.0.20:50052.\n' >&2
+        printf 'Set LLAMA_RPC_SERVERS or LLAMA_RPC_SUBNET to locate workers.\n' >&2
         exit 1
     fi
 

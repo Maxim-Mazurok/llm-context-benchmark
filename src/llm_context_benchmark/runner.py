@@ -501,6 +501,9 @@ class BenchmarkRunner:
             )
         finally:
             monitor.update(phase="idle")
+            close_adapter = getattr(self.adapter, "close", None)
+            if callable(close_adapter):
+                close_adapter()
             monitor.stop()
 
         status = (

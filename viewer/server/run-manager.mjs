@@ -32,6 +32,7 @@ export function buildBenchmarkArguments(task) {
   const commandArguments = task.resume
     ? ["--resume", task.output, ...(task.cap ? ["--max-context", String(task.cap)] : ["--no-max-context"])]
     : ["--model", task.model.path, "--output", task.output];
+  if (task.provider === "unsloth-studio") commandArguments.push("--adapter", "unsloth-llama.cpp");
   if (!task.resume && task.speculative) commandArguments.push("--speculative");
   if (!task.resume && task.speculative && task.numDraftTokens) commandArguments.push("--num-draft-tokens", String(task.numDraftTokens));
   if (!task.resume && task.cap) commandArguments.push("--max-context", String(task.cap));
@@ -57,9 +58,11 @@ export class RunManager {
     this.state.log = [...this.state.log, ...lines].slice(-80);
   }
 
-  async start({ models, decodeMode = "raw", strategy = "continuous", maxContext = null, stages = [], swapStopGib = 4, numDraftTokens = null }) {
+  async start({ provider = "mlx-lm", models, decodeMode = "raw", strategy = "continuous", maxContext = null, stages = [], swapStopGib = 4, numDraftTokens = null }) {
     if (this.child || this.state.status === "running") throw new Error("A benchmark job is already running.");
     if (!Array.isArray(models) || !models.length) throw new Error("Select at least one model.");
+    if (!["mlx-lm", "unsloth-studio"].includes(provider)) throw new Error("Choose a supported benchmark provider.");
+    if (provider === "unsloth-studio" && decodeMode !== "raw") throw new Error("Unsloth llama.cpp currently supports raw decoding only.");
     if (!["raw", "speculative", "both"].includes(decodeMode)) throw new Error("Choose raw, speculative, or both decode modes.");
     const caps = buildContextCaps(strategy, maxContext, stages);
     const runDirectories = new Map();
@@ -79,6 +82,7 @@ export class RunManager {
             runDirectories.set(key, output);
           }
           queue.push({
+            provider,
             model,
             cap,
             output,

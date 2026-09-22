@@ -8,7 +8,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from .adapters import Adapter, LlamaServerAdapter, MLXLMAdapter, MockAdapter
+from .adapters import (
+    Adapter,
+    LlamaServerAdapter,
+    MLXLMAdapter,
+    MockAdapter,
+    UnslothLlamaCppAdapter,
+)
 from .model_discovery import LocalModel, discover_omlx_models, safe_model_slug
 from .runner import BenchmarkConfig, BenchmarkRunner
 from .speculative import (
@@ -108,12 +114,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum speculative draft depth (default: OMLX setting, otherwise 3)",
     )
     parser.add_argument(
-        "--adapter", choices=("mlx-lm", "llama-server", "mock"), default="mlx-lm"
+        "--adapter",
+        choices=("mlx-lm", "llama-server", "mock", "unsloth-llama.cpp"),
+        default="mlx-lm",
     )
     parser.add_argument(
         "--server-url",
         default="http://127.0.0.1:8080",
         help="llama-server base URL when --adapter llama-server is used",
+    )
+    parser.add_argument(
+        "--unsloth-server",
+        help="Path to Unsloth's llama-server executable",
     )
     parser.add_argument(
         "--serve-run",
@@ -535,10 +547,10 @@ def main(argv: list[str] | None = None) -> int:
         args.all_omlx_models or args.list_omlx_models
     ) and args.adapter != "mlx-lm":
         parser.error("OMLX model discovery requires --adapter mlx-lm")
-    if args.adapter == "mlx-lm" and not (
+    if args.adapter in ("mlx-lm", "unsloth-llama.cpp") and not (
         args.model or args.all_omlx_models or args.list_omlx_models
     ):
-        parser.error("--model is required with --adapter mlx-lm")
+        parser.error(f"--model is required with --adapter {args.adapter}")
     for name in (
         "chunk_tokens",
         "short_decode_tokens",
@@ -603,6 +615,13 @@ def main(argv: list[str] | None = None) -> int:
         adapter = LlamaServerAdapter(
             args.model,
             server_url=args.server_url,
+            seed_text=seed_text,
+        )
+    elif args.adapter == "unsloth-llama.cpp":
+        adapter = UnslothLlamaCppAdapter(
+            args.model,
+            context_size=args.max_context,
+            server_path=args.unsloth_server,
             seed_text=seed_text,
         )
     else:

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  fetchBenchmark, fetchBenchmarks, fetchModels, fetchRunner,
-  resumeBenchmark, startRunner, stopRunner,
+  fetchBenchmark, fetchBenchmarks, fetchInferenceProviders, fetchModels,
+  fetchRunner, fetchUnslothBenchmarkModels, resumeBenchmark, startRunner,
+  stopRunner,
 } from "./api.js";
 import MetricChart, { chartColor } from "./MetricChart.jsx";
 import { InferenceWorkbench } from "./InferenceWorkbench.jsx";
@@ -16,8 +17,10 @@ function formatRunDate(value) {
   return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function RunnerPanel({ models, runner, onRunnerChange, onRefresh }) {
+function RunnerPanel({ models: localModels, providers, runner, onRunnerChange }) {
   const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState("mlx-lm");
+  const [unslothModels, setUnslothModels] = useState([]);
   const [selected, setSelected] = useState([]);
   const [strategy, setStrategy] = useState("staged");
   const [decodeMode, setDecodeMode] = useState("raw");
@@ -28,12 +31,51 @@ function RunnerPanel({ models, runner, onRunnerChange, onRefresh }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const active = ["running", "stopping"].includes(runner?.status);
+  const models = provider === "unsloth-studio" ? unslothModels : localModels;
+
+  useEffect(() => {
+    const availableProvider = providers.find((item) => item.id === "mlx-lm" && item.installed)
+      || providers.find((item) => item.id === "unsloth-studio" && item.benchmarkInstalled);
+    if (availableProvider) setProvider(availableProvider.id);
+  }, [providers]);
+
+  useEffect(() => {
+    if (provider !== "unsloth-studio") return;
+    setMessage("Finding downloaded Unsloth models…");
+    fetchUnslothBenchmarkModels()
+      .then((payload) => {
+        setUnslothModels(payload.models || []);
+        setMessage(payload.models?.length
+          ? `Found ${payload.models.length} benchmarkable model${payload.models.length === 1 ? "" : "s"}.`
+          : payload.unavailableReason || "No downloaded GGUF models were found.");
+      })
+      .catch((error) => setMessage(error.message));
+  }, [provider]);
+
+  const selectProvider = (nextProvider) => {
+    setProvider(nextProvider);
+    setSelected([]);
+    setMessage("");
+  };
+
+  const refreshUnslothModels = async () => {
+    setMessage("Finding downloaded Unsloth models…");
+    try {
+      const payload = await fetchUnslothBenchmarkModels();
+      setUnslothModels(payload.models || []);
+      setSelected([]);
+      setMessage(payload.models?.length
+        ? `Found ${payload.models.length} benchmarkable model${payload.models.length === 1 ? "" : "s"}.`
+        : payload.unavailableReason || "No downloaded GGUF models were found.");
+    } catch (error) { setMessage(error.message); }
+  };
+
   const submit = async () => {
     setBusy(true); setMessage("");
     try {
       const chosen = models.filter((model) => selected.includes(model.path));
       const next = await startRunner({
-        models: chosen, decodeMode, strategy,
+        provider, models: chosen, decodeMode: provider === "unsloth-studio" ? "raw" : decodeMode, strategy,
         maxContext: Number(maxContext) || null,
         stages: stages.split(/[ ,]+/).map(Number).filter(Boolean),
         swapStopGib: Number(swapStopGib),
@@ -51,17 +93,30 @@ function RunnerPanel({ models, runner, onRunnerChange, onRefresh }) {
       </button>
       <div className={`runner-body ${open ? "is-open" : ""}`}><div className="runner-body-inner">
         {!active && <>
-          <div className="runner-toolbar"><span>{selected.length} of {models.length} models selected</span><button type="button" onClick={() => setSelected(models.map((model) => model.path))}>Select all</button><button type="button" onClick={() => setSelected([])}>Clear</button></div>
+          <div className="runner-provider">
+            <label>Provider<select value={provider} onChange={(event) => selectProvider(event.target.value)}>
+              {providers.map((item) => {
+                const installed = item.id === "unsloth-studio" ? item.benchmarkInstalled : item.installed;
+                return <option key={item.id} value={item.id} disabled={!installed}>{item.name}{installed ? "" : " (runtime unavailable)"}</option>;
+              })}
+            </select></label>
+            {provider === "unsloth-studio" && <div className="provider-actions"><button type="button" onClick={refreshUnslothModels}>Refresh models</button></div>}
+          </div>
+          {provider === "unsloth-studio" && <p className="provider-capability">Runs use Unsloth’s bundled llama.cpp runtime with one private cache slot. Prefill uses native prompt-evaluation timing; decode uses streamed token timing. Unload the same model from Studio first to avoid loading its weights twice.</p>}
+          <div className="runner-toolbar"><span>{selected.length} of {models.length} models selected</span><button type="button" onClick={() => setSelected(models.map((model) => model.path || model.id))}>Select all</button><button type="button" onClick={() => setSelected([])}>Clear</button></div>
           <div className="model-picker">
-            {models.map((model) => <label key={model.path}><input type="checkbox" checked={selected.includes(model.path)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, model.path] : current.filter((path) => path !== model.path))} /><span><strong>{model.relativeName}</strong><small>{model.speculative?.length ? model.speculative[0].description : "Raw decoding only"}</small></span></label>)}
+            {models.map((model) => {
+              const modelIdentifier = model.path || model.id;
+              return <label key={modelIdentifier}><input type="checkbox" checked={selected.includes(modelIdentifier)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, modelIdentifier] : current.filter((identifier) => identifier !== modelIdentifier))} /><span><strong>{model.relativeName || model.name}</strong><small>{provider === "unsloth-studio" ? "Persistent llama.cpp cache · prefill + decode" : model.speculative?.length ? model.speculative[0].description : "Raw decoding only"}</small></span></label>;
+            })}
           </div>
           <div className="run-options">
             <fieldset><legend>Schedule</legend><label><input type="radio" name="strategy" checked={strategy === "staged"} onChange={() => setStrategy("staged")} /> Round-robin stages</label><label><input type="radio" name="strategy" checked={strategy === "continuous"} onChange={() => setStrategy("continuous")} /> Finish each model</label></fieldset>
             <label>Final context target <span className="optional">optional</span><input type="number" min="1" value={maxContext} placeholder="Model/runtime limit" onChange={(event) => setMaxContext(event.target.value)} /><small>Leave empty to continue until the model or runtime stops.</small></label>
             {strategy === "staged" && <label>Context stages<input type="text" value={stages} onChange={(event) => setStages(event.target.value)} /></label>}
             <label>Stop after added swap<input type="number" min="0" step="0.5" value={swapStopGib} onChange={(event) => setSwapStopGib(event.target.value)} /><small>GiB peak growth; raise this to allow heavily swapped runs.</small></label>
-            <fieldset className="decode-mode"><legend>Decode variants</legend><label><input type="radio" name="decodeMode" checked={decodeMode === "raw"} onChange={() => setDecodeMode("raw")} /> Raw only</label><label><input type="radio" name="decodeMode" checked={decodeMode === "speculative"} onChange={() => setDecodeMode("speculative")} /> Speculative only</label><label><input type="radio" name="decodeMode" checked={decodeMode === "both"} onChange={() => setDecodeMode("both")} /> Raw + speculative</label><small>“Both” creates separate comparable runs. Models without a drafter still run raw.</small></fieldset>
-            {decodeMode !== "raw" && <label>Speculative draft blocks <span className="optional">optional</span><input type="number" min="1" value={numDraftTokens} placeholder="OMLX setting, otherwise 3" onChange={(event) => setNumDraftTokens(event.target.value)} /><small>Maximum adaptive MTP draft depth; an explicit value overrides OMLX.</small></label>}
+            {provider === "mlx-lm" && <fieldset className="decode-mode"><legend>Decode variants</legend><label><input type="radio" name="decodeMode" checked={decodeMode === "raw"} onChange={() => setDecodeMode("raw")} /> Raw only</label><label><input type="radio" name="decodeMode" checked={decodeMode === "speculative"} onChange={() => setDecodeMode("speculative")} /> Speculative only</label><label><input type="radio" name="decodeMode" checked={decodeMode === "both"} onChange={() => setDecodeMode("both")} /> Raw + speculative</label><small>“Both” creates separate comparable runs. Models without a drafter still run raw.</small></fieldset>}
+            {provider === "mlx-lm" && decodeMode !== "raw" && <label>Speculative draft blocks <span className="optional">optional</span><input type="number" min="1" value={numDraftTokens} placeholder="OMLX setting, otherwise 3" onChange={(event) => setNumDraftTokens(event.target.value)} /><small>Maximum adaptive MTP draft depth; an explicit value overrides OMLX.</small></label>}
           </div>
           <button className="start-button" type="button" disabled={busy || !selected.length} onClick={submit}>Start benchmark queue</button>
         </>}
@@ -154,7 +209,7 @@ function ModelComparison({ benchmarks, modelBenchmarks, metrics, details, ensure
   );
 }
 
-function RunLedger({ benchmarks, modelBenchmarks, metrics, details, ensureDetail, models, runner, onRunnerChange, onSelect, onRefresh, refreshing }) {
+function RunLedger({ benchmarks, modelBenchmarks, metrics, details, ensureDetail, models, providers, runner, onRunnerChange, onSelect, onRefresh, refreshing }) {
   const [query, setQuery] = useState("");
   const [ledgerMode, setLedgerMode] = useState("models");
   const entries = ledgerMode === "models" ? modelBenchmarks : benchmarks;
@@ -169,7 +224,7 @@ function RunLedger({ benchmarks, modelBenchmarks, metrics, details, ensureDetail
         <p className="lede">See where local models slow down, consume memory, and begin to swap as their live context grows.</p>
         <a className="workbench-link" href="#inference">Open document workbench →</a>
       </header>
-      <RunnerPanel models={models} runner={runner} onRunnerChange={onRunnerChange} onRefresh={onRefresh} />
+      <RunnerPanel models={models} providers={providers} runner={runner} onRunnerChange={onRunnerChange} />
       <ModelComparison
         benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics}
         details={details} ensureDetail={ensureDetail}
@@ -290,15 +345,18 @@ export default function App() {
   const [modelBenchmarks, setModelBenchmarks] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [details, setDetails] = useState({});
-  const [selectedId, setSelectedId] = useState(() => decodeURIComponent(location.hash.replace("#run=", "")) || null);
+  const [selectedId, setSelectedId] = useState(() => location.hash.startsWith("#run=") ? decodeURIComponent(location.hash.replace("#run=", "")) : null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(true);
   const [models, setModels] = useState([]);
+  const [providers, setProviders] = useState([{ id: "mlx-lm", name: "MLX-LM", installed: true, running: true }]);
   const [runner, setRunner] = useState({ status: "idle", queue: [], log: [] });
   const pendingDetails = useRef(new Map());
+  const runnerSnapshot = useRef(runner);
+  const runnerWasActive = useRef(false);
 
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
+  const refresh = useCallback(async ({ background = false } = {}) => {
+    if (!background) setRefreshing(true);
     try {
       const payload = await fetchBenchmarks();
       setBenchmarks(payload.benchmarks);
@@ -308,25 +366,42 @@ export default function App() {
     } catch (requestError) {
       setError(requestError.message);
     } finally {
-      setRefreshing(false);
+      if (!background) setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
-  useEffect(() => { fetchModels().then((payload) => setModels(payload.models || [])).catch((requestError) => setError(requestError.message)); }, []);
   useEffect(() => {
+    if (view === "benchmarks") refresh();
+  }, [refresh, view]);
+  useEffect(() => {
+    if (view !== "benchmarks" || models.length) return;
+    fetchModels().then((payload) => setModels(payload.models || [])).catch(() => setModels([]));
+  }, [models.length, view]);
+  useEffect(() => {
+    if (view !== "benchmarks") return;
+    fetchInferenceProviders().then((payload) => setProviders(payload.providers || [])).catch(() => {});
+  }, [view]);
+  useEffect(() => {
+    if (view !== "benchmarks") return undefined;
     const poll = async () => {
       try {
-        const next = await fetchRunner(); setRunner(next);
-        await refresh();
-        if (selectedId) {
+        const next = await fetchRunner();
+        const nextIsActive = ["running", "stopping"].includes(next.status);
+        const shouldRefreshBenchmarks = nextIsActive || runnerWasActive.current;
+        runnerWasActive.current = nextIsActive;
+        if (JSON.stringify(next) !== JSON.stringify(runnerSnapshot.current)) {
+          runnerSnapshot.current = next;
+          setRunner(next);
+        }
+        if (shouldRefreshBenchmarks) await refresh({ background: true });
+        if (shouldRefreshBenchmarks && selectedId) {
           const detail = await fetchBenchmark(selectedId).catch(() => null);
           if (detail) setDetails((current) => ({ ...current, [selectedId]: detail }));
         }
       } catch { /* the main refresh surface reports persistent failures */ }
     };
     poll(); const timer = setInterval(poll, 2000); return () => clearInterval(timer);
-  }, [refresh, selectedId]);
+  }, [refresh, selectedId, view]);
   useEffect(() => {
     const onHashChange = () => {
       setView(location.hash === "#inference" ? "inference" : "benchmarks");
@@ -376,5 +451,5 @@ export default function App() {
   if (selectedId && selected) {
     return <DetailView benchmark={selected} benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail} onBack={showList} runner={runner} onRunnerChange={setRunner} />;
   }
-  return <RunLedger benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail} models={models} runner={runner} onRunnerChange={setRunner} onSelect={selectRun} onRefresh={refresh} refreshing={refreshing} />;
+  return <RunLedger benchmarks={benchmarks} modelBenchmarks={modelBenchmarks} metrics={metrics} details={details} ensureDetail={ensureDetail} models={models} providers={providers} runner={runner} onRunnerChange={setRunner} onSelect={selectRun} onRefresh={refresh} refreshing={refreshing} />;
 }
