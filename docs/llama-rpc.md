@@ -2,8 +2,9 @@
 
 This setup runs `llama-server` on the 32 GB Apple Silicon Mac and exposes one
 or more remote devices through llama.cpp RPC. The model file stays on the Mac;
-the RPC client transfers assigned tensors to each worker. `--cache` lets a
-worker retain those tensors for later starts.
+the RPC client transfers assigned tensors to each worker. Worker `--cache`
+stores transferred weight tensors on local disk so later starts can skip their
+network transfer; it does not retain them in VRAM.
 
 RPC is proof-of-concept software with no authentication or encryption. Bind it
 only on a trusted private network, restrict the Windows firewall rule to the
@@ -12,10 +13,10 @@ Mac's address, and never forward port 50052 from the router.
 ## Recommended first model
 
 Start with
-`bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q5_K_L` (26.23 GB). It is large enough
-to use the 8 GB RTX meaningfully at the default 32K context, but still leaves
-more combined headroom than the 30.95 GB Q6_K build. Test Q6_K after the first
-setup works, or when a second 8 GB worker is available:
+`bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q4_K_M` (22.3 GB). The 26.2 GB Q5_K_L
+build leaves too little practical headroom on a 32 GB Mac plus an 8 GB Windows
+GPU once macOS, Windows, Metal/CUDA buffers, and KV cache are included. Test a
+larger quantization only when another worker is available:
 
 ```bash
 export LLAMA_HUGGING_FACE_REPOSITORY='bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q6_K'
@@ -128,7 +129,6 @@ variables:
 ```bash
 export LLAMA_MODEL_PATH='/absolute/path/to/model.gguf'
 export LLAMA_CONTEXT_SIZE=65536
-export LLAMA_TENSOR_SPLIT='3,1'
 export LLAMA_FIT_TARGET='4096,512'
 export LLAMA_BATCH_SIZE=512
 export LLAMA_MICROBATCH_SIZE=128
@@ -139,7 +139,10 @@ Device order and available memory are printed during load. On the Mac host it
 is normally Metal first, followed by RPC workers in `LLAMA_RPC_SERVERS` order.
 Only tune split proportions and fit targets after recording that order. Setting
 `LLAMA_TENSOR_SPLIT` disables llama.cpp's automatic fit calculation, so it is an
-expert override rather than a normal tuning control.
+expert override rather than a normal tuning control. The launcher prints a
+warning and disables `--fit` when this override is present. If Windows Task
+Manager reports shared GPU memory use, the CUDA allocation has exceeded
+dedicated VRAM; stop the server and use automatic fitting or a smaller model.
 
 ## 4. Benchmark
 
@@ -213,8 +216,8 @@ repositories are not interchangeable with GGUF repositories.
 
 No full model download is required on a worker. The Mac owns the model file and
 sends each worker its assigned tensors over RPC. With worker caching enabled,
-those transferred tensors can be retained for later starts, but the worker does
-not become the authoritative model store.
+weight tensors are cached on the worker's local disk to avoid later network
+transfers, but the worker does not become the authoritative model store.
 
 ### Must Mac and Windows use the same llama.cpp revision?
 
@@ -242,10 +245,11 @@ Enable RPC diagnostics on either process with `GGML_RPC_DEBUG=1`. Force TCP
 with `GGML_RPC_NO_RDMA=1`. Keep identical pinned revisions across hosts; RPC
 protocol mismatches often appear as connection or tensor-transfer failures.
 
-An RPC worker started with `--cache` retains assigned tensors in GPU memory
-after the Mac server exits. Windows system RAM is not expected to hold the full
-model. Restart the worker process to clear stale GPU tensor caches before
-testing a different split or model.
+An RPC worker started with `--cache` stores reusable weight tensors under its
+local llama.cpp cache directory. GPU allocations are released when the Mac
+server disconnects. Windows shared GPU memory use indicates CUDA fallback into
+system RAM, not useful additional VRAM; stop that run rather than benchmarking
+it.
 
 Warnings about unused `nextn` tensors in Qwen3.6 describe optional speculative
 decoding weights and do not cause the Metal failure. `Insufficient Memory`

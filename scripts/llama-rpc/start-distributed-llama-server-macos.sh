@@ -107,8 +107,6 @@ resolve_llama_model_selection
 arguments=(
     --rpc "$rpc_servers"
     --split-mode layer
-    --fit on
-    --fit-target "$fit_target"
     --ctx-size "$context_size"
     --batch-size "$batch_size"
     --ubatch-size "$microbatch_size"
@@ -124,7 +122,10 @@ arguments=(
 )
 
 if [[ -n "$tensor_split" ]]; then
-    arguments+=(--tensor-split "$tensor_split")
+    printf 'Warning: LLAMA_TENSOR_SPLIT disables automatic memory fitting; monitor dedicated and shared GPU memory.\n' >&2
+    arguments+=(--fit off --tensor-split "$tensor_split")
+else
+    arguments+=(--fit on --fit-target "$fit_target")
 fi
 
 if [[ -n "$model_path" ]]; then

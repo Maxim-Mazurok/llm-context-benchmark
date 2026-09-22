@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-recommended_hugging_face_repository='bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q5_K_L'
+recommended_hugging_face_repository='bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q4_K_M'
 
 resolve_llama_model_selection() {
     if [[ -n "$model_path" || -n "$hugging_face_repository" ]]; then
