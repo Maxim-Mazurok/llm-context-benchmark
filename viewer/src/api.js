@@ -15,6 +15,7 @@ export const fetchModels = () => request("/api/models");
 export const fetchUnslothBenchmarkModels = () => request("/api/benchmark/providers/unsloth-studio/models");
 export const fetchInferenceProviders = () => request("/api/inference/providers");
 export const fetchRunner = () => request("/api/runner");
+export const fetchLlamaLog = () => request("/api/llama-log");
 
 export function uploadInferenceDocument(file, onProgress) {
   return new Promise((resolve, reject) => {

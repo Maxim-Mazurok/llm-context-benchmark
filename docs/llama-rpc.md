@@ -139,6 +139,27 @@ export LLAMA_MICROBATCH_SIZE=128
 export LLAMA_SERVER_PORT=8081
 ```
 
+llama.cpp can also cap reasoning before allowing the model to continue with its
+final answer. Configure the server defaults through its supported environment
+variables:
+
+```bash
+export LLAMA_ARG_REASONING=on
+export LLAMA_ARG_THINK_BUDGET=4096
+export LLAMA_ARG_THINK_BUDGET_MESSAGE='I have enough information. I will now provide the final answer.'
+```
+
+The reasoning budget accepts `-1` for unlimited reasoning, `0` to end reasoning
+immediately, or a positive token count. Use both budget settings for user-facing
+responses: the token count enforces the limit, while the short message helps the
+model transition cleanly before llama.cpp forces the end-of-thinking token. The
+message is optional and defaults to none; omitting it is preferable for controlled
+benchmarks where injected guidance would affect comparability. The overall
+`max_tokens` or `n_predict` limit still needs enough room for the final answer.
+Qwen3.6 35B A3B supports reasoning on or off through `enable_thinking`; its chat
+template does not expose graded reasoning-effort or model-native budget controls.
+The llama.cpp budget is an external hard limit and remains usable with this model.
+
 `--list-devices` prints Metal before RPC, but implicit model allocation places
 RPC workers first to reduce network transfers. Fit targets and tensor-split
 values follow that model order. With one worker, `1,3` means 25% Windows and 75%
@@ -179,6 +200,105 @@ prompt cache. Run metadata records adapter, server URL, model alias, and context
 limit. Host memory samples cover the Mac only; collect `nvidia-smi` telemetry
 separately when GPU memory/power measurements matter.
 
+## Direct USB4 networking
+
+<!-- cspell:words Gbps iperf Mbps -->
+
+A direct USB4 cable can carry llama.cpp RPC between macOS and Windows through
+the USB4 peer-to-peer network adapters. A connected 20 Gbps USB4 fabric does
+not by itself make RPC use the cable: both peer adapters need IPv4 addresses,
+the Windows network profile and firewall must admit RPC, and the Mac launcher
+must use the Windows USB4 address.
+
+The tested pair assigned link-local addresses automatically:
+
+- Mac Thunderbolt Bridge: `169.254.117.5/16`
+- Windows USB4 P2P Network Adapter: `169.254.185.10/16`
+
+Find the current Windows values in Administrator PowerShell:
+
+```powershell
+Get-NetAdapter |
+  Format-Table Name, InterfaceDescription, Status, LinkSpeed, MacAddress, `
+    ifIndex -Auto
+Get-NetIPAddress -AddressFamily IPv4 |
+  Format-Table InterfaceAlias, IPAddress, PrefixLength, AddressState -Auto
+Get-NetConnectionProfile |
+  Format-Table InterfaceAlias, NetworkCategory, IPv4Connectivity -Auto
+```
+
+The tested Windows adapter appeared as `Ethernet 2`, with interface description
+`USB4(TM) P2P Network Adapter`. Windows initially classified it as Public, so
+the RPC firewall rule created by the worker launcher did not apply. Change only
+the USB4 adapter to Private:
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias 'Ethernet 2' -NetworkCategory Private
+```
+
+Keep Wi-Fi's gateway and DNS configuration unchanged. The link-local USB4
+adapter needs no default gateway. Confirm that the existing
+`llama.cpp RPC on private networks` rule allows inbound TCP port 50052 on the
+Private profile and that the worker listens on `0.0.0.0:50052`.
+
+On the Mac, verify the direct endpoint and route:
+
+```bash
+nc -vz 169.254.185.10 50052
+route -n get 169.254.185.10
+```
+
+The route must show `interface: bridge0`. Start the server with the direct
+address to bypass Wi-Fi discovery:
+
+```bash
+LLAMA_RPC_SERVERS='169.254.185.10:50052' \
+  ./scripts/llama-rpc/start-distributed-llama-server-macos.sh
+```
+
+### Measured USB4 versus Wi-Fi performance
+
+Measurements from 2026-09-22 used `iperf3` 3.21 and the same Windows worker.
+The Windows Wi-Fi adapter reported a 600 Mbps link rate; its actual TCP
+throughput was substantially lower.
+
+| Path | Direction | Streams | Receiver throughput |
+| --- | --- | ---: | ---: |
+| USB4 | Mac to Windows | 1 | 17.856 Gbps |
+| USB4 | Windows to Mac | 1 | 11.192 Gbps |
+| USB4 | Mac to Windows | 4 | 18.861 Gbps |
+| USB4 | Windows to Mac | 4 | 9.907 Gbps |
+| Wi-Fi | Mac to Windows | 1 | 121.765 Mbps |
+| Wi-Fi | Windows to Mac | 1 | 114.086 Mbps |
+| Wi-Fi | Mac to Windows | 4 | 127.650 Mbps |
+| Wi-Fi | Windows to Mac | 4 | 88.628 Mbps |
+
+One hundred TCP connections to RPC port 50052 produced these latency results:
+
+| Path | Minimum | Median | Mean | p95 | Maximum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| USB4 | 0.463 ms | 0.561 ms | 0.722 ms | 1.054 ms | 9.856 ms |
+| Wi-Fi | 6.157 ms | 19.587 ms | 52.744 ms | 131.835 ms | 150.894 ms |
+
+For this pair, USB4 delivered about 87 to 165 times more TCP throughput and
+about 35 times lower median TCP connection latency. ICMP behavior was
+inconsistent across Windows firewall states, so TCP connection latency is the
+relevant comparison for RPC.
+
+The clearest inference benefit is uncached tensor transfer when loading a
+model. At the measured one-stream rates, ideal transfer time for 7 GiB is about
+3.4 seconds over USB4 versus 8.2 minutes over Wi-Fi. Protocol, storage, tensor
+allocation, and initialization overhead increase real load time. Worker
+`--cache` reduces this difference on later loads.
+
+Steady-state token throughput also benefits from USB4's bandwidth and latency
+when execution crosses the local/remote device boundary. The improvement is
+model-, split-, prompt-, and GPU-dependent; it does not scale directly with the
+87-to-165-times network throughput ratio because GPU compute and local memory
+operations remain part of every token. Compare prompt and decode rates with
+identical model, tensor split, context, cache, and benchmark arguments to
+measure the end-to-end gain.
+
 ## Additional workers
 
 For another Windows NVIDIA machine, run the same worker script on another IP
@@ -198,9 +318,7 @@ export LLAMA_RPC_DEVICE=CPU
 ```
 
 A 1 Gbps link can make a slow CPU worker reduce total throughput. Add it only
-after measuring Mac+RTX, and compare prompt and decode rates separately. A
-direct Thunderbolt link may help only when both machines and operating systems
-support the transport; ordinary USB networking still uses TCP.
+after measuring Mac+RTX, and compare prompt and decode rates separately.
 
 ## Common questions
 

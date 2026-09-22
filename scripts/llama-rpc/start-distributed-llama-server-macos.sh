@@ -15,6 +15,7 @@ tensor_split="${LLAMA_TENSOR_SPLIT:-}"
 fit_target="${LLAMA_FIT_TARGET:-}"
 batch_size="${LLAMA_BATCH_SIZE:-512}"
 microbatch_size="${LLAMA_MICROBATCH_SIZE:-128}"
+prompt_cache_mebibytes="${LLAMA_PROMPT_CACHE_MEBIBYTES:-0}"
 rpc_port="${LLAMA_RPC_PORT:-50052}"
 rpc_subnet="${LLAMA_RPC_SUBNET:-}"
 rpc_scan_parallelism="${LLAMA_RPC_SCAN_PARALLELISM:-64}"
@@ -56,6 +57,10 @@ done
 
 if [[ ! "$mtp_blocks" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MTP blocks must be a positive integer: %s\n' "$mtp_blocks" >&2
+    exit 1
+fi
+if [[ ! "$prompt_cache_mebibytes" =~ ^[0-9]+$ ]]; then
+    printf 'Prompt cache size must be a non-negative integer: %s\n' "$prompt_cache_mebibytes" >&2
     exit 1
 fi
 
@@ -162,6 +167,7 @@ arguments=(
     --ubatch-size "$microbatch_size"
     --cache-type-k q8_0
     --cache-type-v q8_0
+    --cache-ram "$prompt_cache_mebibytes"
     --parallel 1
     --host 0.0.0.0
     --port "$server_port"

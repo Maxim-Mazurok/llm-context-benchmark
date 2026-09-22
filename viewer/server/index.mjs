@@ -2,7 +2,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import { pipeline } from "node:stream/promises";
 import express from "express";
 
 import { buildModelBenchmarks, getBenchmark, listBenchmarks, METRICS } from "./data.mjs";
+import { parseLlamaServerLog } from "./llama-log-parser.mjs";
 import { RunManager } from "./run-manager.mjs";
 import {
   defaultUnslothEndpoint,
@@ -30,6 +31,7 @@ const viewerRoot = path.join(projectRoot, "viewer");
 const runsDir = path.resolve(process.env.BENCHMARK_RUNS_DIR || path.join(projectRoot, "runs"));
 const launcher = path.join(projectRoot, "bin", "llm-context-bench");
 const inferenceLauncher = path.join(projectRoot, "bin", "llm-context-infer");
+const llamaLogPath = path.join(viewerRoot, "data", "llama-server-example.log");
 const uploadDirectory = path.join(os.tmpdir(), "llm-context-benchmark-uploads");
 const omlxModelsDirectory = path.join(os.homedir(), ".omlx", "models");
 const omlxApplicationPath = process.env.OMLX_APP_PATH || "/Applications/oMLX.app";
@@ -45,6 +47,25 @@ app.use(express.json());
 
 app.get("/api/health", (_request, response) => {
   response.json({ ok: true, runsDir, runner: runManager.snapshot() });
+});
+
+app.get("/api/llama-log", async (_request, response, next) => {
+  try {
+    const [content, logStats] = await Promise.all([
+      readFile(llamaLogPath, "utf8"),
+      stat(llamaLogPath),
+    ]);
+    response.json({
+      ...parseLlamaServerLog(content),
+      source: {
+        name: path.basename(llamaLogPath),
+        bytes: logStats.size,
+        modifiedAt: logStats.mtime.toISOString(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/models", async (_request, response, next) => {
