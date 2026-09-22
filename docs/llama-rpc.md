@@ -37,8 +37,8 @@ that architecture.
 
 ## 1. Build the Mac host
 
-The setup scripts pin llama.cpp to a verified revision so all machines speak
-the same RPC protocol.
+The setup scripts pin llama.cpp to release `b11094` so all machines speak the
+same RPC protocol.
 
 ```bash
 ./scripts/llama-rpc/setup-llama-cpp-macos.sh
@@ -47,15 +47,19 @@ the same RPC protocol.
 Override checkout location or revision with `LLAMA_CPP_DIRECTORY` and
 `LLAMA_CPP_REVISION`.
 
-## 2. Build the Windows CUDA worker
+## 2. Install the Windows CUDA worker
 
-Install current NVIDIA drivers, CUDA Toolkit, Git, CMake, and Visual Studio 2022
-with **Desktop development with C++**. In Developer PowerShell from this cloned
-repository:
+Install a current NVIDIA driver. In PowerShell from this cloned repository,
+download and verify the official pinned CUDA 12.4 llama.cpp binaries:
 
 ```powershell
 .\scripts\llama-rpc\setup-llama-cpp-windows.ps1
 ```
+
+The script includes the matching CUDA runtime, so CUDA Toolkit, Git, CMake, and
+Visual Studio Build Tools are not required on Windows. Override the installation
+location with `-LlamaCppDirectory`; the release is intentionally pinned to keep
+it compatible with the Mac host.
 
 Start the worker from Administrator PowerShell. It creates a firewall rule that
 allows any source address on networks classified as Private:
@@ -87,11 +91,13 @@ the scan range or port when needed:
 ```bash
 export LLAMA_RPC_SUBNET='192.168.1'
 export LLAMA_RPC_PORT=50052
+export LLAMA_RPC_SCAN_PARALLELISM=64
 ```
 
-The scan detects any TCP service listening on that port; the subsequent
-llama.cpp connection verifies that it is a compatible RPC worker. If no worker
-is found, an interactive launch asks for comma-separated addresses manually.
+Each connection attempt has a one-second timeout. The scan detects any TCP
+service listening on that port; the subsequent llama.cpp connection verifies
+that it is a compatible RPC worker. If no worker is found, an interactive
+launch asks for comma-separated addresses manually.
 For noninteractive use, or to skip discovery, set `LLAMA_RPC_SERVERS` first:
 
 ```bash

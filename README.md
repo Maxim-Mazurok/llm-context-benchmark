@@ -96,7 +96,7 @@ uv run llm-context-bench \
   --max-context 65536
 ```
 
-The repository includes pinned macOS and Windows build scripts, worker and host
+The repository includes pinned macOS build and Windows binary setup scripts, worker and host
 launchers, a recommended Qwen3.6 35B-A3B GGUF, firewall guidance, and a
 Mac-only comparison path. See [Distributed llama.cpp RPC](docs/llama-rpc.md).
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 llama_cpp_directory="${LLAMA_CPP_DIRECTORY:-$HOME/llama.cpp}"
-llama_cpp_revision="${LLAMA_CPP_REVISION:-58367713a6935c0810103378144008df32e3d5db}"
+llama_cpp_revision="${LLAMA_CPP_REVISION:-b11094}"
 metal_backend="${LLAMA_CPP_METAL:-ON}"
 build_directory="$llama_cpp_directory/build-rpc-metal"
 

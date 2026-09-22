@@ -14,6 +14,7 @@ server_port="${LLAMA_SERVER_PORT:-8080}"
 tensor_split="${LLAMA_TENSOR_SPLIT:-}"
 rpc_port="${LLAMA_RPC_PORT:-50052}"
 rpc_subnet="${LLAMA_RPC_SUBNET:-}"
+rpc_scan_parallelism="${LLAMA_RPC_SCAN_PARALLELISM:-64}"
 
 discover_rpc_servers() {
     local default_interface
@@ -42,8 +43,8 @@ discover_rpc_servers() {
         discovered_addresses+=("$discovered_address")
     done < <(
         seq 1 254 |
-            xargs -P 32 -I '{}' sh -c \
-                'nc -z -w 1 "$1.{}" "$2" >/dev/null 2>&1 && printf "%s.{}\n" "$1"' \
+            xargs -P "$rpc_scan_parallelism" -I '{}' sh -c \
+                'nc -z -G 1 -w 1 "$1.{}" "$2" >/dev/null 2>&1 && printf "%s.{}\n" "$1"' \
                 sh "$rpc_subnet" "$rpc_port" |
             sort -t . -k 4,4n
     )
