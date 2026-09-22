@@ -13,9 +13,9 @@ Mac's address, and never forward port 50052 from the router.
 
 Start with
 `bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q5_K_L` (26.23 GB). It is large enough
-that a 65K Q8 KV cache makes the 8 GB RTX useful, but still leaves more combined
-headroom than the 30.95 GB Q6_K build. Test Q6_K after the first setup works,
-or when a second 8 GB worker is available:
+to use the 8 GB RTX meaningfully at the default 32K context, but still leaves
+more combined headroom than the 30.95 GB Q6_K build. Test Q6_K after the first
+setup works, or when a second 8 GB worker is available:
 
 ```bash
 export LLAMA_HUGGING_FACE_REPOSITORY='bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q6_K'
@@ -115,19 +115,31 @@ The Mac sends assigned tensors over the LAN. Later starts can reuse both local
 and RPC caches. Wait for `http://127.0.0.1:8080/health` to return
 `{"status":"ok"}`.
 
-Defaults are layer splitting, automatic memory-proportional allocation, 65,536
-context tokens, Q8 K/V cache, one server slot, and text-only loading. Override
-them with environment variables:
+Defaults are automatic layer fitting, 4,096 MiB of reserved Mac memory, 512 MiB
+reserved on each worker, 32,768 context tokens, 512-token batches, 128-token
+physical microbatches, Q8 K/V cache, one server slot, and text-only loading.
+Additional workers add another 512 MiB fit target each. These conservative
+defaults avoid Metal allocation failures during warm-up and large prompt
+batches. The launcher deliberately leaves both `--n-gpu-layers` and
+`--tensor-split` unset so llama.cpp can choose the layer count and device split
+needed to meet those fit targets. Override the defaults with environment
+variables:
 
 ```bash
 export LLAMA_MODEL_PATH='/absolute/path/to/model.gguf'
-export LLAMA_CONTEXT_SIZE=32768
+export LLAMA_CONTEXT_SIZE=65536
 export LLAMA_TENSOR_SPLIT='3,1'
+export LLAMA_FIT_TARGET='4096,512'
+export LLAMA_BATCH_SIZE=512
+export LLAMA_MICROBATCH_SIZE=128
 export LLAMA_SERVER_PORT=8081
 ```
 
-Do not set `LLAMA_TENSOR_SPLIT` initially. Device order and available memory are
-printed during load; only tune the proportions after recording that order.
+Device order and available memory are printed during load. On the Mac host it
+is normally Metal first, followed by RPC workers in `LLAMA_RPC_SERVERS` order.
+Only tune split proportions and fit targets after recording that order. Setting
+`LLAMA_TENSOR_SPLIT` disables llama.cpp's automatic fit calculation, so it is an
+expert override rather than a normal tuning control.
 
 ## 4. Benchmark
 
@@ -229,3 +241,14 @@ nc -vz 192.168.0.20 50052
 Enable RPC diagnostics on either process with `GGML_RPC_DEBUG=1`. Force TCP
 with `GGML_RPC_NO_RDMA=1`. Keep identical pinned revisions across hosts; RPC
 protocol mismatches often appear as connection or tensor-transfer failures.
+
+An RPC worker started with `--cache` retains assigned tensors in GPU memory
+after the Mac server exits. Windows system RAM is not expected to hold the full
+model. Restart the worker process to clear stale GPU tensor caches before
+testing a different split or model.
+
+Warnings about unused `nextn` tensors in Qwen3.6 describe optional speculative
+decoding weights and do not cause the Metal failure. `Insufficient Memory`
+during warm-up or a request means the Mac allocation is too aggressive. Keep
+the default 32K context and reduced batch sizes for the first successful run;
+then raise one setting at a time.

@@ -9,9 +9,12 @@ llama_server_path="$llama_cpp_directory/build-rpc-metal/bin/llama-server"
 rpc_servers="${LLAMA_RPC_SERVERS:-}"
 model_path="${LLAMA_MODEL_PATH:-}"
 hugging_face_repository="${LLAMA_HUGGING_FACE_REPOSITORY:-}"
-context_size="${LLAMA_CONTEXT_SIZE:-65536}"
+context_size="${LLAMA_CONTEXT_SIZE:-32768}"
 server_port="${LLAMA_SERVER_PORT:-8080}"
 tensor_split="${LLAMA_TENSOR_SPLIT:-}"
+fit_target="${LLAMA_FIT_TARGET:-}"
+batch_size="${LLAMA_BATCH_SIZE:-512}"
+microbatch_size="${LLAMA_MICROBATCH_SIZE:-128}"
 rpc_port="${LLAMA_RPC_PORT:-50052}"
 rpc_subnet="${LLAMA_RPC_SUBNET:-}"
 rpc_scan_parallelism="${LLAMA_RPC_SCAN_PARALLELISM:-64}"
@@ -90,13 +93,25 @@ if [[ -z "$rpc_servers" ]]; then
     done
 fi
 
+rpc_server_separators="${rpc_servers//[^,]/}"
+rpc_server_count=$(( ${#rpc_server_separators} + 1 ))
+if [[ -z "$fit_target" ]]; then
+    fit_target=4096
+    for ((i = 0; i < rpc_server_count; i++)); do
+        fit_target+=,512
+    done
+fi
+
 resolve_llama_model_selection
 
 arguments=(
     --rpc "$rpc_servers"
-    --n-gpu-layers all
     --split-mode layer
+    --fit on
+    --fit-target "$fit_target"
     --ctx-size "$context_size"
+    --batch-size "$batch_size"
+    --ubatch-size "$microbatch_size"
     --cache-type-k q8_0
     --cache-type-v q8_0
     --parallel 1
@@ -108,13 +123,13 @@ arguments=(
     --alias distributed-local
 )
 
+if [[ -n "$tensor_split" ]]; then
+    arguments+=(--tensor-split "$tensor_split")
+fi
+
 if [[ -n "$model_path" ]]; then
     arguments+=(--model "$model_path")
 else
     arguments+=(--hf-repo "$hugging_face_repository")
 fi
-if [[ -n "$tensor_split" ]]; then
-    arguments+=(--tensor-split "$tensor_split")
-fi
-
 exec "$llama_server_path" "${arguments[@]}"
