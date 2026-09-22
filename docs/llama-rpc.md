@@ -116,33 +116,38 @@ The Mac sends assigned tensors over the LAN. Later starts can reuse both local
 and RPC caches. Wait for `http://127.0.0.1:8080/health` to return
 `{"status":"ok"}`.
 
-Defaults are automatic layer fitting, 4,096 MiB of reserved Mac memory, 512 MiB
-reserved on each worker, 32,768 context tokens, 512-token batches, 128-token
-physical microbatches, Q8 K/V cache, one server slot, and text-only loading.
-Additional workers add another 512 MiB fit target each. These conservative
-defaults avoid Metal allocation failures during warm-up and large prompt
-batches. The launcher deliberately leaves both `--n-gpu-layers` and
-`--tensor-split` unset so llama.cpp can choose the layer count and device split
-needed to meet those fit targets. Override the defaults with environment
-variables:
+With exactly two workers, the launcher defaults to the RPC-first tensor split
+`1,1,1.1`. With the recommended Q4_K_M model and two 8 GB NVIDIA cards, this
+places about 7 GB on each worker while retaining CUDA headroom. llama.cpp's
+automatic fit does not account for macOS unified host-memory pressure, so a
+larger Metal fit target alone does not move these layers off the Mac.
+
+Other worker counts use automatic layer fitting, 8,192 MiB of reserved Mac
+memory, and 512 MiB reserved on each worker. All modes default to 32,768 context
+tokens, 512-token batches, 128-token physical microbatches, Q8 K/V cache, one
+server slot, and text-only loading. Fit targets follow llama.cpp's model-device
+order: all RPC workers first, then the local Metal device. Additional workers
+add another 512 MiB target before the final 8,192 MiB Mac target. Override the
+defaults with environment variables:
 
 ```bash
 export LLAMA_MODEL_PATH='/absolute/path/to/model.gguf'
 export LLAMA_CONTEXT_SIZE=65536
-export LLAMA_FIT_TARGET='4096,512'
+export LLAMA_FIT_TARGET='512,8192'
 export LLAMA_BATCH_SIZE=512
 export LLAMA_MICROBATCH_SIZE=128
 export LLAMA_SERVER_PORT=8081
 ```
 
-Device order and available memory are printed during load. On the Mac host it
-is normally Metal first, followed by RPC workers in `LLAMA_RPC_SERVERS` order.
-Only tune split proportions and fit targets after recording that order. Setting
-`LLAMA_TENSOR_SPLIT` disables llama.cpp's automatic fit calculation, so it is an
-expert override rather than a normal tuning control. The launcher prints a
-warning and disables `--fit` when this override is present. If Windows Task
-Manager reports shared GPU memory use, the CUDA allocation has exceeded
-dedicated VRAM; stop the server and use automatic fitting or a smaller model.
+`--list-devices` prints Metal before RPC, but implicit model allocation places
+RPC workers first to reduce network transfers. Fit targets and tensor-split
+values follow that model order. With one worker, `1,3` means 25% Windows and 75%
+Mac; `3,1` means 75% Windows and will exceed an 8 GB GPU for the recommended
+model. Setting `LLAMA_TENSOR_SPLIT` replaces the two-worker default or disables
+llama.cpp's automatic fit calculation for other topologies. Set
+`LLAMA_TENSOR_SPLIT=auto` to force automatic fitting. If Windows Task Manager
+reports shared GPU memory use, the CUDA allocation has exceeded dedicated VRAM;
+stop the server and increase the final Mac share or use a smaller model.
 
 ## 4. Benchmark
 

@@ -95,11 +95,17 @@ fi
 
 rpc_server_separators="${rpc_servers//[^,]/}"
 rpc_server_count=$(( ${#rpc_server_separators} + 1 ))
+if [[ "$tensor_split" == 'auto' ]]; then
+    tensor_split=
+elif [[ -z "$tensor_split" && "$rpc_server_count" -eq 2 ]]; then
+    tensor_split='1,1,1.1'
+fi
 if [[ -z "$fit_target" ]]; then
-    fit_target=4096
+    fit_target=
     for ((i = 0; i < rpc_server_count; i++)); do
-        fit_target+=,512
+        fit_target+="${fit_target:+,}512"
     done
+    fit_target+=,8192
 fi
 
 resolve_llama_model_selection
@@ -122,7 +128,7 @@ arguments=(
 )
 
 if [[ -n "$tensor_split" ]]; then
-    printf 'Warning: LLAMA_TENSOR_SPLIT disables automatic memory fitting; monitor dedicated and shared GPU memory.\n' >&2
+    printf 'Using RPC-first tensor split %s; monitor dedicated and shared GPU memory.\n' "$tensor_split" >&2
     arguments+=(--fit off --tensor-split "$tensor_split")
 else
     arguments+=(--fit on --fit-target "$fit_target")
