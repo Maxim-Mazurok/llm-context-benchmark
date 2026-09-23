@@ -168,6 +168,7 @@ arguments=(
     --cache-type-k q8_0
     --cache-type-v q8_0
     --cache-ram "$prompt_cache_mebibytes"
+    --ctx-checkpoints 0
     --parallel 1
     --host 0.0.0.0
     --port "$server_port"

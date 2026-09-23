@@ -132,6 +132,13 @@ changes how weights enter memory; it does not change tensor placement or cause
 weights to load on demand during inference. Mac-only mode intentionally keeps
 llama.cpp's default mmap behavior because every model tensor is local there.
 
+The launcher also passes `--ctx-checkpoints 0`. llama-server otherwise retains
+up to 32 context checkpoints per slot. For hybrid linear-attention models, each
+checkpoint includes recurrent state on the layer's assigned device. These
+snapshots accumulate during inference and can consume more than 1 GiB across
+the remote workers before reaching the cap. This benchmark only extends one
+exact prompt prefix, so direct KV reuse works without rollback checkpoints.
+
 With exactly two workers, the launcher defaults to the RPC-first tensor split
 `1,1,1.1`. With the recommended Q4_K_M model and two 8 GB NVIDIA cards, this
 places about 7 GB on each worker while retaining CUDA headroom. llama.cpp's
@@ -404,3 +411,10 @@ GGUF size, confirm the running command contains `--load-mode none`. Expected
 growth is the local tensor share plus local cache and compute buffers. Total
 macOS memory used can grow further from reclaimable filesystem cache and is not
 equivalent to llama-server resident or wired memory.
+
+If remote GPU memory grows gradually during inference, confirm the running
+command contains `--ctx-checkpoints 0`. Existing checkpoint and CUDA allocator
+allocations are released reliably by restarting both the Mac server and RPC
+workers. Continued growth with checkpoints disabled comes from compute-buffer
+high-water marks or CUDA allocator retention; leave at least 1.5 to 2 GiB of
+dedicated VRAM free after model loading or reduce batch and microbatch sizes.
