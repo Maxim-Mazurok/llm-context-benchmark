@@ -4,6 +4,7 @@ param(
     [ValidateRange(1, 65535)]
     [int]$Port = 50052,
     [string]$Device = "CUDA0",
+    [int]$Threads = 0,
     [string]$AllowedClientAddress = "Any"
 )
 
@@ -31,4 +32,15 @@ New-NetFirewallRule `
     -Profile Private | Out-Null
 
 Write-Warning "RPC has no authentication or encryption. Use only on a trusted private network."
-& $rpcServerPath --host $HostAddress --port $Port --device $Device --cache
+
+$arguments = @('--host', $HostAddress, '--port', $Port, '--device', $Device, '--cache')
+if ($Threads -gt 0) {
+    $arguments += @('--threads', $Threads)
+}
+
+if ($Device -match ',') {
+    Write-Host "Exposing multiple devices ($Device); the host tensor split decides the GPU/RAM ratio on this worker."
+}
+
+& $rpcServerPath @arguments
+exit $LASTEXITCODE

@@ -19,6 +19,9 @@ prompt_cache_mebibytes="${LLAMA_PROMPT_CACHE_MEBIBYTES:-0}"
 rpc_port="${LLAMA_RPC_PORT:-50052}"
 rpc_subnet="${LLAMA_RPC_SUBNET:-}"
 rpc_scan_parallelism="${LLAMA_RPC_SCAN_PARALLELISM:-64}"
+gpu_layers="${LLAMA_GPU_LAYERS:-}"
+cpu_moe_layers="${LLAMA_CPU_MOE_LAYERS:-}"
+cpu_ffn_layers="${LLAMA_CPU_FFN_LAYERS:-}"
 use_local_server=false
 mtp_enabled=false
 mtp_blocks=3
@@ -41,11 +44,39 @@ while [[ $# -gt 0 ]]; do
             mtp_blocks="$2"
             shift 2
             ;;
+        --gpu-layers)
+            if [[ $# -lt 2 ]]; then
+                printf '%s requires a value.\n' "$1" >&2
+                exit 1
+            fi
+            gpu_layers="$2"
+            shift 2
+            ;;
+        --cpu-moe-layers)
+            if [[ $# -lt 2 ]]; then
+                printf '%s requires a value.\n' "$1" >&2
+                exit 1
+            fi
+            cpu_moe_layers="$2"
+            shift 2
+            ;;
+        --cpu-ffn-layers)
+            if [[ $# -lt 2 ]]; then
+                printf '%s requires a value.\n' "$1" >&2
+                exit 1
+            fi
+            cpu_ffn_layers="$2"
+            shift 2
+            ;;
         --help|-h)
-            printf 'Usage: %s [--local] [--mtp] [--mtp-blocks NUMBER]\n' "${0##*/}"
-            printf '  --local              Run on the Mac only without RPC discovery.\n'
-            printf '  --mtp                Enable MTP speculative decoding.\n'
-            printf '  --mtp-blocks NUMBER  Set MTP draft blocks (default: 3).\n'
+            printf 'Usage: %s [--local] [--mtp] [--mtp-blocks NUMBER] [--gpu-layers VALUE]\n' "${0##*/}"
+            printf '       [--cpu-moe-layers NUMBER] [--cpu-ffn-layers NUMBER]\n'
+            printf '  --local                  Run on the Mac only without RPC discovery.\n'
+            printf '  --mtp                    Enable MTP speculative decoding.\n'
+            printf '  --mtp-blocks NUMBER      Set MTP draft blocks (default: 3).\n'
+            printf '  --gpu-layers VALUE       Layers to offload to GPU devices: NUMBER, auto, or all.\n'
+            printf '  --cpu-moe-layers NUMBER  Keep MoE weights of the first NUMBER layers in system RAM.\n'
+            printf '  --cpu-ffn-layers NUMBER  Keep dense FFN weights of the first NUMBER layers in system RAM.\n'
             exit 0
             ;;
         *)
@@ -61,6 +92,18 @@ if [[ ! "$mtp_blocks" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if [[ ! "$prompt_cache_mebibytes" =~ ^[0-9]+$ ]]; then
     printf 'Prompt cache size must be a non-negative integer: %s\n' "$prompt_cache_mebibytes" >&2
+    exit 1
+fi
+if [[ -n "$gpu_layers" && ! "$gpu_layers" =~ ^([0-9]+|auto|all)$ ]]; then
+    printf 'GPU layers must be a non-negative integer, auto, or all: %s\n' "$gpu_layers" >&2
+    exit 1
+fi
+if [[ -n "$cpu_moe_layers" && ! "$cpu_moe_layers" =~ ^[0-9]+$ ]]; then
+    printf 'CPU MoE layers must be a non-negative integer: %s\n' "$cpu_moe_layers" >&2
+    exit 1
+fi
+if [[ -n "$cpu_ffn_layers" && ! "$cpu_ffn_layers" =~ ^[0-9]+$ ]]; then
+    printf 'CPU FFN layers must be a non-negative integer: %s\n' "$cpu_ffn_layers" >&2
     exit 1
 fi
 
@@ -182,12 +225,29 @@ if [[ "$mtp_enabled" == true ]]; then
 fi
 
 if [[ "$use_local_server" == true ]]; then
-    arguments+=(--n-gpu-layers all --alias mac-local)
+    arguments+=(--n-gpu-layers "${gpu_layers:-all}" --alias mac-local)
 elif [[ -n "$tensor_split" ]]; then
     printf 'Using RPC-first tensor split %s; monitor dedicated and shared GPU memory.\n' "$tensor_split" >&2
-    arguments+=(--rpc "$rpc_servers" --load-mode none --split-mode layer --fit off --tensor-split "$tensor_split" --alias distributed-local)
+    arguments+=(--rpc "$rpc_servers" --load-mode none --split-mode layer --fit off --tensor-split "$tensor_split")
+    if [[ -n "$gpu_layers" ]]; then
+        arguments+=(--n-gpu-layers "$gpu_layers")
+    fi
+    arguments+=(--alias distributed-local)
 else
-    arguments+=(--rpc "$rpc_servers" --load-mode none --split-mode layer --fit on --fit-target "$fit_target" --alias distributed-local)
+    arguments+=(--rpc "$rpc_servers" --load-mode none --split-mode layer --fit on --fit-target "$fit_target")
+    if [[ -n "$gpu_layers" ]]; then
+        arguments+=(--n-gpu-layers "$gpu_layers")
+    fi
+    arguments+=(--alias distributed-local)
+fi
+
+if [[ -n "$cpu_moe_layers" ]]; then
+    printf 'Keeping Mixture of Experts weights of the first %s layers in system RAM.\n' "$cpu_moe_layers" >&2
+    arguments+=(--n-cpu-moe "$cpu_moe_layers")
+fi
+if [[ -n "$cpu_ffn_layers" ]]; then
+    printf 'Keeping dense feed-forward weights of the first %s layers in system RAM.\n' "$cpu_ffn_layers" >&2
+    arguments+=(--n-cpu-ffn "$cpu_ffn_layers")
 fi
 
 if [[ -n "$model_path" ]]; then

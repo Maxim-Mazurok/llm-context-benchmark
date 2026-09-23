@@ -1,10 +1,17 @@
 # Distributed llama.cpp RPC
 
-This setup runs `llama-server` on the 32 GB Apple Silicon Mac and exposes one
-or more remote devices through llama.cpp RPC. The model file stays on the Mac;
-the RPC client transfers assigned tensors to each worker. Worker `--cache`
-stores transferred weight tensors on local disk so later starts can skip their
-network transfer; it does not retain them in VRAM.
+This setup runs `llama-server` as the parent process on either the 32 GB Apple
+Silicon Mac or the Windows CUDA machine, and exposes one or more remote devices
+through llama.cpp RPC. The model file stays on the parent host; the RPC client
+transfers assigned tensors to each worker. Worker `--cache` stores transferred
+weight tensors on local disk so later starts can skip their network transfer;
+it does not retain them in VRAM.
+
+Either host can take the parent role. The Mac parent is
+`start-distributed-llama-server-macos.sh`; the Windows parent is
+`start-distributed-llama-server-windows.ps1`. Both accept the same partial GPU
+offloading controls described in
+[Partial GPU offloading](#partial-gpu-offloading).
 
 RPC is proof-of-concept software with no authentication or encryption. Bind it
 only on a trusted private network, restrict the Windows firewall rule to the
@@ -60,7 +67,9 @@ download and verify the official pinned CUDA 12.4 llama.cpp binaries:
 The script includes the matching CUDA runtime, so CUDA Toolkit, Git, CMake, and
 Visual Studio Build Tools are not required on Windows. Override the installation
 location with `-LlamaCppDirectory`; the release is intentionally pinned to keep
-it compatible with the Mac host.
+it compatible with the Mac host. The archive provides both
+`ggml-rpc-server.exe` for worker duty and `llama-server.exe` for parent duty,
+so the same installation covers either role.
 
 Start the worker from Administrator PowerShell. It creates a firewall rule that
 allows any source address on networks classified as Private:
@@ -75,6 +84,12 @@ To restrict access to the Mac later, pass
 Keep this process running. Its startup output must list `CUDA0` and roughly
 8 GB total memory. If it does not, fix CUDA detection before starting the Mac
 host.
+
+`-Device` accepts a comma-separated device list. Passing `CUDA0,CPU` makes one
+worker advertise two RPC devices, so a share of its assignment can stay in that
+machine's ordinary system RAM instead of VRAM. See
+[Partial GPU offloading](#partial-gpu-offloading). `-Threads` sets the CPU
+device thread count and only matters when the list includes `CPU`.
 
 ## 3. Start distributed inference on the Mac
 
@@ -193,6 +208,167 @@ llama.cpp's automatic fit calculation for other topologies. Set
 reports shared GPU memory use, the CUDA allocation has exceeded dedicated VRAM;
 stop the server and increase the final Mac share or use a smaller model.
 
+## 3b. Start distributed inference on Windows
+
+The Windows machine can take the parent role instead. Run it from a normal
+PowerShell prompt; only the worker script needs Administrator rights for its
+firewall rule:
+
+```powershell
+.\scripts\llama-rpc\start-distributed-llama-server-windows.ps1
+```
+
+It mirrors the Mac launcher: it scans the current IPv4 `/24` subnet on port
+50052, lists reachable workers, offers to use all of them, and falls back to a
+manual prompt. It reads the same `LLAMA_*` environment variables and also
+accepts explicit parameters:
+
+```powershell
+.\scripts\llama-rpc\start-distributed-llama-server-windows.ps1 `
+  -RpcServers '169.254.117.5:50052' `
+  -ContextSize 65536 `
+  -ServerPort 8081
+```
+
+Use `-Local` for a Windows-only comparison run, `-Mtp` and `-MtpBlocks` for MTP
+speculative decoding, and `-TensorSplit` or `-FitTarget` for placement. When
+neither `-ModelPath` nor `-HuggingFaceRepository` is set, an interactive launch
+lists GGUF files found under `~\.lmstudio\models`, `~\.ollama\models`, the
+Hugging Face hub cache, and `<LlamaCppDirectory>\models`, then offers the
+recommended download.
+
+Two differences from the Mac launcher are intentional. The local alias is
+`windows-local` rather than `mac-local`, and the reserved local fit target
+defaults to 2,048 MiB of dedicated VRAM instead of the Mac's 8,192 MiB of
+unified memory. Override both reserved margins directly:
+
+```powershell
+$env:LLAMA_LOCAL_FIT_TARGET_MEBIBYTES = '3072'
+$env:LLAMA_WORKER_FIT_TARGET_MEBIBYTES = '512'
+```
+
+The Windows launcher does not apply the Mac's `1,1,1.1` two-worker split
+default, because that value was measured for a 32 GB unified-memory host. Set
+`-TensorSplit` explicitly when automatic fitting places too much on the local
+CUDA device.
+
+## Partial GPU offloading
+
+Tensor split divides the model across *GPU-class* devices. It does not decide
+how much of the model stays in ordinary system RAM on the CPU device. Three
+independent controls do that, and both parent launchers expose all three:
+
+| Control | Mac flag / variable | Windows parameter | llama.cpp argument |
+| --- | --- | --- | --- |
+| Layers kept on GPU devices | `--gpu-layers` / `LLAMA_GPU_LAYERS` | `-GpuLayers` | `--n-gpu-layers` |
+| MoE expert weights left in RAM | `--cpu-moe-layers` / `LLAMA_CPU_MOE_LAYERS` | `-CpuMoeLayers` | `--n-cpu-moe` |
+| Dense FFN weights left in RAM | `--cpu-ffn-layers` / `LLAMA_CPU_FFN_LAYERS` | `-CpuFfnLayers` | `--n-cpu-ffn` |
+
+`--gpu-layers` accepts an exact layer count, `auto`, or `all`. It is a global
+cap across every non-CPU device, including RPC workers, not a per-device value.
+llama.cpp assigns the last N layers to the device list in tensor-split
+proportions and leaves the remaining leading layers on the parent host's CPU
+device in system RAM. So the two controls compose: `--gpu-layers` chooses the
+GPU-versus-RAM ratio, and `--tensor-split` divides the GPU portion between the
+workers and the local GPU.
+
+Offload 24 of the model's layers across the RPC workers plus the local GPU, and
+keep the rest in the parent's RAM:
+
+```bash
+./scripts/llama-rpc/start-distributed-llama-server-macos.sh --gpu-layers 24
+```
+
+```powershell
+.\scripts\llama-rpc\start-distributed-llama-server-windows.ps1 -GpuLayers 24
+```
+
+For a Mixture-of-Experts model such as the recommended Qwen3.6 35B A3B,
+`--cpu-moe-layers` is usually the better first lever. Expert weights dominate
+the file size but only a few experts are active per token, so moving the expert
+weights of the first N layers to RAM frees a large amount of VRAM for a modest
+throughput cost:
+
+```bash
+./scripts/llama-rpc/start-distributed-llama-server-macos.sh --cpu-moe-layers 16
+```
+
+Use `--cpu-ffn-layers` for dense models, where there are no expert weights to
+move. All three controls also work with `--local`/`-Local`, which is how you
+measure the cost of RAM residency without RPC in the picture.
+
+### Partial offloading on a worker
+
+`ggml-rpc-server` itself has no layer-count option; the parent decides
+placement. A worker gets a GPU/RAM split by advertising both of its devices:
+
+```powershell
+.\scripts\llama-rpc\start-llama-rpc-worker-windows.ps1 -Device 'CUDA0,CPU' -Threads 8
+```
+
+```bash
+export LLAMA_RPC_DEVICE='CPU'
+export LLAMA_RPC_THREADS=8
+./scripts/llama-rpc/start-llama-rpc-worker-macos.sh
+```
+
+One worker then registers as two RPC devices on the parent, and the parent's
+`--tensor-split` covers both. With one such worker and the local GPU, the model
+device order becomes worker CUDA, worker CPU, local GPU, so a split of
+`3,1,4` places 37.5% in the worker's VRAM, 12.5% in the worker's system RAM,
+and 50% on the local GPU. Confirm the actual order in the parent's startup
+device listing before tuning the values.
+
+[Unverified] The throughput cost of worker-side CPU placement has not been
+measured for this pair; a remote CPU device adds both network transfer and slow
+compute to every token that touches those layers. Compare prompt and decode
+rates against a GPU-only split before keeping the configuration.
+
+### Worked example: two Windows laptops with 8 GB GPUs
+
+Qwen3.6-35B-A3B at Q4_K_M is roughly 22.3 GB, well over the 16 GB combined
+VRAM of two 8 GB GPUs. Because it is a Mixture-of-Experts model with only
+~3B active parameters per token, `--cpu-moe-layers all` keeps that cost low:
+it forces the (large) expert weights into RAM while leaving the (small)
+attention and shared weights on the GPUs, so the two 8 GB cards only need to
+hold a small fraction of the file.
+
+Child laptop (worker), exposing only its GPU:
+
+```powershell
+.\scripts\llama-rpc\start-llama-rpc-worker-windows.ps1 -Device CUDA0
+```
+
+Note its LAN IP address (default port `50052`), e.g. `192.168.1.51:50052`.
+
+Parent laptop, combining both GPUs and offloading MoE experts to its own RAM:
+
+```powershell
+.\scripts\llama-rpc\start-distributed-llama-server-windows.ps1 `
+  -HuggingFaceRepository 'bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q4_K_M' `
+  -RpcServers '192.168.1.51:50052' `
+  -TensorSplit '1,1' `
+  -GpuLayers all `
+  -CpuMoeLayers all
+```
+
+`-TensorSplit '1,1'` splits GPU-eligible layers evenly between the parent's
+own GPU and the worker's GPU (two devices total). `-GpuLayers all` makes
+every layer eligible; `-CpuMoeLayers all` then pulls the MoE expert tensors
+back out to the parent's system RAM regardless. If VRAM headroom allows,
+lower `-CpuMoeLayers` from `all` to a specific layer count to move some
+experts back onto the GPUs for more throughput, checking VRAM usage as you
+go.
+
+This pattern keeps all CPU-resident weights on the parent's RAM only; the
+child laptop's RAM is not used for weights in this configuration (see
+"Partial offloading on a worker" above for the `-Device 'CUDA0,CPU'` +
+`--override-tensor` alternative that would route specific expert tensors to
+a worker's RAM, which the launcher scripts do not currently pass through).
+
+[Unverified] Not yet run on this hardware pair; treat the tensor-split ratio
+and layer counts as a starting point to tune from observed VRAM usage.
+
 ## 4. Benchmark
 
 Run a short validation first:
@@ -209,14 +385,23 @@ uv run llm-context-bench \
 ```
 
 Then compare identical model, context, cache types, and benchmark arguments.
-Start distributed mode for one run and Mac-only mode for the other:
+Start distributed mode for one run and single-host mode for the other:
 
 ```bash
 ./scripts/llama-rpc/start-distributed-llama-server-macos.sh --local
 ```
 
-Add `--mtp` to enable MTP speculative decoding. It uses three draft blocks by
-default; override that with `--mtp-blocks NUMBER`.
+```powershell
+.\scripts\llama-rpc\start-distributed-llama-server-windows.ps1 -Local
+```
+
+Add `--mtp` (`-Mtp` on Windows) to enable MTP speculative decoding. It uses
+three draft blocks by default; override that with `--mtp-blocks NUMBER` or
+`-MtpBlocks NUMBER`.
+
+Keep partial-offload settings identical between compared runs. Changing
+`--gpu-layers`, `--cpu-moe-layers`, or `--cpu-ffn-layers` changes how much of
+the model lives in system RAM and makes prompt and decode rates incomparable.
 
 The adapter keeps one exact token sequence and asks llama-server to reuse its
 prompt cache. Run metadata records adapter, server URL, model alias, and context
@@ -331,6 +516,19 @@ and list both endpoints:
 export LLAMA_RPC_SERVERS='192.168.0.20:50052,192.168.0.21:50052'
 ```
 
+The Mac can also serve as a worker for a Windows parent. Its RPC device names
+are `MTL0` for Metal and `CPU` for system RAM:
+
+```bash
+export LLAMA_RPC_DEVICE='MTL0'
+./scripts/llama-rpc/start-llama-rpc-worker-macos.sh
+```
+
+Use `LLAMA_RPC_DEVICE='MTL0,CPU'` to advertise both, so the parent's tensor
+split can leave part of the Mac's assignment in system RAM. Confirm the exact
+device names on each host by passing an unknown device name; the worker prints
+the available list before exiting.
+
 For an older Intel Mac CPU worker, build with the macOS setup script, then:
 
 ```bash
@@ -344,6 +542,14 @@ A 1 Gbps link can make a slow CPU worker reduce total throughput. Add it only
 after measuring Mac+RTX, and compare prompt and decode rates separately.
 
 ## Common questions
+
+### Which host should run the parent process?
+
+Either. The parent owns the GGUF file, runs the HTTP API, and does all tensor
+placement; workers only execute their assigned share. Prefer the host that
+holds the model file and has the most memory for the unoffloaded remainder,
+since layers excluded by `--gpu-layers` stay in the parent's system RAM. Both
+launchers accept the same options, so the comparison stays fair either way.
 
 ### Will `LLAMA_HUGGING_FACE_REPOSITORY` download the model?
 

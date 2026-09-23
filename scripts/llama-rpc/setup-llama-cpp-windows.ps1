@@ -41,6 +41,10 @@ try {
     if (-not (Test-Path $stagedRpcServerPath)) {
         throw "Official llama.cpp archive did not contain ggml-rpc-server.exe"
     }
+    $stagedLlamaServerPath = Join-Path $stagedBinaryDirectory "llama-server.exe"
+    if (-not (Test-Path $stagedLlamaServerPath)) {
+        throw "Official llama.cpp archive did not contain llama-server.exe"
+    }
 
     Set-Content -Path (Join-Path $stagedBuildDirectory "release.txt") -Value $LlamaCppRelease
     New-Item -ItemType Directory -Path $LlamaCppDirectory -Force | Out-Null
@@ -52,5 +56,7 @@ finally {
 }
 
 $rpcServerPath = Join-Path $binaryDirectory "ggml-rpc-server.exe"
+$llamaServerPath = Join-Path $binaryDirectory "llama-server.exe"
 Write-Host "Installed llama.cpp $LlamaCppRelease"
-Write-Host "RPC worker: $rpcServerPath"
+Write-Host "llama-server: $llamaServerPath"
+Write-Host "RPC worker:   $rpcServerPath"

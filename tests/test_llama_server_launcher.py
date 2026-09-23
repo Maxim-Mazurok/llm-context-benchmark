@@ -101,6 +101,62 @@ def test_invalid_mtp_blocks_fails_without_starting_server(tmp_path: Path) -> Non
     assert result.stderr == "MTP blocks must be a positive integer: 0\n"
 
 
+def test_local_mode_uses_requested_partial_gpu_offload(tmp_path: Path) -> None:
+    result = run_launcher(tmp_path, "--local", "--gpu-layers", "20")
+
+    assert result.returncode == 0
+    assert "--n-gpu-layers\n20\n" in result.stdout
+    assert "--n-gpu-layers\nall\n" not in result.stdout
+
+
+def test_distributed_mode_supports_partial_offload_options(tmp_path: Path) -> None:
+    result = run_launcher(
+        tmp_path,
+        "--gpu-layers",
+        "24",
+        "--cpu-moe-layers",
+        "8",
+        "--cpu-ffn-layers",
+        "4",
+        rpc_servers="192.168.0.20:50052",
+    )
+
+    assert result.returncode == 0
+    assert "--n-gpu-layers\n24\n" in result.stdout
+    assert "--n-cpu-moe\n8\n" in result.stdout
+    assert "--n-cpu-ffn\n4\n" in result.stdout
+    assert "--alias\ndistributed-local\n" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_error"),
+    [
+        (
+            ("--local", "--gpu-layers", "half"),
+            "GPU layers must be a non-negative integer, auto, or all: half\n",
+        ),
+        (
+            ("--local", "--cpu-moe-layers", "-1"),
+            "CPU MoE layers must be a non-negative integer: -1\n",
+        ),
+        (
+            ("--local", "--cpu-ffn-layers", "x"),
+            "CPU FFN layers must be a non-negative integer: x\n",
+        ),
+    ],
+)
+def test_invalid_offload_values_fail_without_starting_server(
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+    expected_error: str,
+) -> None:
+    result = run_launcher(tmp_path, *arguments)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == expected_error
+
+
 def test_installed_llama_server_supports_launcher_mtp_options(
     tmp_path: Path,
 ) -> None:
