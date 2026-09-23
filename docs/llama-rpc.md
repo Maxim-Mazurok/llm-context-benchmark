@@ -116,6 +116,22 @@ The Mac sends assigned tensors over the LAN. Later starts can reuse both local
 and RPC caches. Wait for `http://127.0.0.1:8080/health` to return
 `{"status":"ok"}`.
 
+Distributed mode passes `--load-mode none`. Do not remove this option. The
+default mmap loader advises macOS that the entire GGUF will be needed, which can
+make tensors assigned to RPC workers resident in Mac memory even though the
+workers own their persistent execution copies. Non-mmap loading reads each
+tensor from the Mac's model file and either loads its local allocation or sends
+it to the assigned RPC worker without retaining a mapped copy of remote
+tensors. The Mac must still read the complete GGUF once during startup, so
+macOS may keep some data in reclaimable filesystem cache.
+
+After loading, the Mac retains only its assigned model tensors, local-layer KV
+and recurrent state, Metal compute buffers, and normal server overhead. Each
+RPC worker retains its assigned tensors and cache state. `--load-mode none`
+changes how weights enter memory; it does not change tensor placement or cause
+weights to load on demand during inference. Mac-only mode intentionally keeps
+llama.cpp's default mmap behavior because every model tensor is local there.
+
 With exactly two workers, the launcher defaults to the RPC-first tensor split
 `1,1,1.1`. With the recommended Q4_K_M model and two 8 GB NVIDIA cards, this
 places about 7 GB on each worker while retaining CUDA headroom. llama.cpp's
@@ -382,3 +398,9 @@ decoding weights and do not cause the Metal failure. `Insufficient Memory`
 during warm-up or a request means the Mac allocation is too aggressive. Keep
 the default 32K context and reduced batch sizes for the first successful run;
 then raise one setting at a time.
+
+If distributed startup makes Mac wired memory grow by approximately the full
+GGUF size, confirm the running command contains `--load-mode none`. Expected
+growth is the local tensor share plus local cache and compute buffers. Total
+macOS memory used can grow further from reclaimable filesystem cache and is not
+equivalent to llama-server resident or wired memory.

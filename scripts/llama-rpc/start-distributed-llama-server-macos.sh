@@ -184,9 +184,9 @@ if [[ "$use_local_server" == true ]]; then
     arguments+=(--n-gpu-layers all --alias mac-local)
 elif [[ -n "$tensor_split" ]]; then
     printf 'Using RPC-first tensor split %s; monitor dedicated and shared GPU memory.\n' "$tensor_split" >&2
-    arguments+=(--rpc "$rpc_servers" --split-mode layer --fit off --tensor-split "$tensor_split" --alias distributed-local)
+    arguments+=(--rpc "$rpc_servers" --load-mode none --split-mode layer --fit off --tensor-split "$tensor_split" --alias distributed-local)
 else
-    arguments+=(--rpc "$rpc_servers" --split-mode layer --fit on --fit-target "$fit_target" --alias distributed-local)
+    arguments+=(--rpc "$rpc_servers" --load-mode none --split-mode layer --fit on --fit-target "$fit_target" --alias distributed-local)
 fi
 
 if [[ -n "$model_path" ]]; then

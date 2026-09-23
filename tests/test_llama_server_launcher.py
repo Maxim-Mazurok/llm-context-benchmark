@@ -57,6 +57,7 @@ def test_local_mode_skips_rpc_and_mtp_by_default(tmp_path: Path) -> None:
     assert "--n-gpu-layers\nall\n" in result.stdout
     assert "--alias\nmac-local\n" in result.stdout
     assert "--rpc\n" not in result.stdout
+    assert "--load-mode\n" not in result.stdout
     assert "--spec-type\n" not in result.stdout
     assert "--spec-draft-n-max\n" not in result.stdout
 
@@ -66,6 +67,7 @@ def test_distributed_mode_uses_configured_rpc_server(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert "--rpc\n192.168.0.20:50052\n" in result.stdout
+    assert "--load-mode\nnone\n" in result.stdout
     assert "--alias\ndistributed-local\n" in result.stdout
     assert "--n-gpu-layers\n" not in result.stdout
 
