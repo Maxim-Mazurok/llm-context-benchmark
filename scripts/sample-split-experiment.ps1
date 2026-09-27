@@ -1,6 +1,8 @@
 param([Parameter(Mandatory=$true)][string]$RunDirectory)
 $ErrorActionPreference='Stop'
 $launch=Get-Content (Join-Path $RunDirectory 'launch.json') -Raw | ConvertFrom-Json
+$minimumAvailableRamGiB=if ($null -ne $launch.minimum_available_ram_gib) { [double]$launch.minimum_available_ram_gib } else { 12 }
+$maximumGpuMemoryGiB=if ($null -ne $launch.maximum_gpu_memory_gib) { [double]$launch.maximum_gpu_memory_gib } else { 7 }
 $workerSession=$null
 if ($env:SPLIT_WORKER_PASSWORD) {
     if (-not $env:SPLIT_WORKER_ADDRESS) { throw 'Set SPLIT_WORKER_ADDRESS when using remote telemetry' }
@@ -44,14 +46,21 @@ try {
             } | Select-Object pid,working_set_bytes,cpu_seconds,free_ram_bytes,dedicated_bytes,shared_bytes,system_page_reads_per_second,cpu_performance_percent,gpu
         }
         $row | ConvertTo-Json -Depth 5 -Compress | Add-Content (Join-Path $RunDirectory 'telemetry.jsonl')
-        if ($state.status -eq 'running' -and ($row.free_ram_bytes -lt 8GB -or $row.dedicated_bytes -gt 7GB -or
-            ($row.worker -and $row.worker.dedicated_bytes -gt 7GB))) {
-            @{reason='Memory safety limit';measurement=$row} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $RunDirectory 'abort.json')
-        }
-        if ($row.free_ram_bytes -lt 5GB) {
-            # Protect the user's machine rather than continuing an unsafe allocation.
-            @{reason='Emergency low available RAM';measurement=$row} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $RunDirectory 'abort.json')
+        $minimumAvailableRamBytes=$minimumAvailableRamGiB*1GB
+        $maximumGpuMemoryBytes=$maximumGpuMemoryGiB*1GB
+        if ($row.free_ram_bytes -lt $minimumAvailableRamBytes -or $row.dedicated_bytes -gt $maximumGpuMemoryBytes) {
+            @{reason='Local memory safety limit';measurement=$row} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $RunDirectory 'abort.json')
             Stop-Process -Id $launch.pid -Force
+            break
+        }
+        if ($workerSession -and ($row.worker.free_ram_bytes -lt $minimumAvailableRamBytes -or
+            $row.worker.dedicated_bytes -gt $maximumGpuMemoryBytes)) {
+            @{reason='RPC worker memory safety limit';measurement=$row} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $RunDirectory 'abort.json')
+            $workerPid=[int]$row.worker.pid
+            Invoke-Command -Session $workerSession -ArgumentList $workerPid -ScriptBlock {
+                param($processId)
+                Stop-Process -Id $processId -Force
+            }
             break
         }
         if ($state.status -notin @('loading','running')) { break }
