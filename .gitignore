@@ -1,5 +1,7 @@
 /.venv/
+/.runtime/
 /runs/
+/*.log
 *.egg-info/
 __pycache__/
 .pytest_cache/

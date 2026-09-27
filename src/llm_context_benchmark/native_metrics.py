@@ -3,9 +3,14 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
-import resource
+import platform
 from dataclasses import dataclass
 from typing import Any
+
+try:
+    import resource
+except ModuleNotFoundError:  # pragma: no cover - exercised on Windows
+    resource = None  # type: ignore[assignment]
 
 
 class _VmStatistics64(ctypes.Structure):
@@ -45,6 +50,31 @@ class _XswUsage(ctypes.Structure):
         ("xsu_pagesize", ctypes.c_uint32),
         ("xsu_encrypted", ctypes.c_int32),
     ]
+
+
+class _ProcessMemoryCounters(ctypes.Structure):
+    """Windows PROCESS_MEMORY_COUNTERS without requiring pywin32 or psutil."""
+
+    _fields_ = [
+        ("cb", ctypes.c_ulong),
+        ("PageFaultCount", ctypes.c_ulong),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+
+
+def _resource_peak_rss_bytes() -> int | None:
+    if resource is None:
+        return None
+    peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    # macOS reports bytes; Linux and the other supported Unix targets report KiB.
+    return peak if platform.system() == "Darwin" else peak * 1024
 
 
 @dataclass(slots=True)
@@ -147,7 +177,7 @@ class MacOSMetrics:
                 # A process can disappear only in unusual embedding scenarios;
                 # the native counters below still produce a useful sample.
                 rss = None
-        peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        peak = _resource_peak_rss_bytes()
         if used is None and total is not None and free is not None:
             available = free + int(vm.inactive_count * self._page_size) if vm else free
             used = max(0, total - available)
@@ -171,12 +201,33 @@ class MacOSMetrics:
 class PortableMetrics:
     """Best-effort fallback used by tests and non-macOS development."""
 
+    def __init__(self) -> None:
+        self._get_process_memory_info: Any | None = None
+        self._process_handle: int | None = None
+        if os.name == "nt":
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+            psapi.GetProcessMemoryInfo.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(_ProcessMemoryCounters),
+                ctypes.c_ulong,
+            ]
+            psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+            self._process_handle = kernel32.GetCurrentProcess()
+            self._get_process_memory_info = psapi.GetProcessMemoryInfo
+
     def snapshot(self) -> NativeSnapshot:
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        if os.uname().sysname != "Darwin":
-            peak *= 1024
-        return NativeSnapshot(process_peak_rss_bytes=int(peak))
+        peak = _resource_peak_rss_bytes()
+        if peak is None and self._get_process_memory_info is not None:
+            counters = _ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            if self._get_process_memory_info(
+                self._process_handle, ctypes.byref(counters), counters.cb
+            ):
+                peak = int(counters.PeakWorkingSetSize)
+        return NativeSnapshot(process_peak_rss_bytes=peak)
 
 
 def make_native_metrics() -> MacOSMetrics | PortableMetrics:
-    return MacOSMetrics() if os.uname().sysname == "Darwin" else PortableMetrics()
+    return MacOSMetrics() if platform.system() == "Darwin" else PortableMetrics()

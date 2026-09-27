@@ -17,6 +17,65 @@ RPC is proof-of-concept software with no authentication or encryption. Bind it
 only on a trusted private network, restrict the Windows firewall rule to the
 Mac's address, and never forward port 50052 from the router.
 
+The Qwen3.8 Flash Next Windows + Mac findings, safety fixes, measured 150K
+placements, and next CPU/RPC split-search plan are preserved in
+[`qwen-flash-split-search.md`](qwen-flash-split-search.md).
+
+## Staged Qwen3.8-Flash-Next setup
+
+Qwen3.8-Flash-Next uses the `qwen4_exp` architecture and requires llama.cpp
+`b11146` or newer. That release uses RPC protocol v7 and cannot share an RPC
+session with the pinned `b11094` processes used below. Keep the installations
+side by side, and do not switch a worker until every process serving the current
+model has been stopped normally.
+
+Install the compatible Windows CUDA runtime without replacing the pinned one:
+
+```powershell
+.\scripts\llama-rpc\setup-llama-cpp-windows.ps1 `
+  -LlamaCppDirectory 'C:\AI\llama.cpp-b11146' `
+  -LlamaCppRelease 'b11146'
+```
+
+Download the chosen quantization's GGUF shards. The command is resumable. This
+example selects IQ4_XS; the split-search note records the later Q2_K_XL trial:
+
+```powershell
+hf download unsloth/Qwen3.8-Flash-Next-GGUF `
+  --include 'UD-IQ4_XS/*.gguf' `
+  --local-dir 'C:\AI\Qwen3.8-Flash-Next-IQ4_XS' `
+  --max-workers 3
+```
+
+After the current model test, install `b11146` on the other Windows laptop and
+start its worker from that installation. Expose `CUDA0,CPU` because the two 8 GB
+GPUs cannot hold the 93.6 GB model without both laptops' system RAM. If the Mac
+joins the same run, build commit `7fe450e19305b828c199d602c23a8337aaa1f03b`
+there; every parent and worker must use the same RPC protocol revision.
+
+```powershell
+.\scripts\llama-rpc\start-llama-rpc-worker-windows.ps1 `
+  -LlamaCppDirectory 'C:\AI\llama.cpp-b11146' `
+  -Device 'CUDA0,CPU' `
+  -AllowedClientAddress 'PARENT_USB4_ADDRESS'
+```
+
+Start the Windows parent with the first shard only after matching workers are
+reachable. Split GGUF metadata makes llama.cpp discover the other sibling shards:
+
+```powershell
+$env:LLAMA_ARG_NO_HOST = '1'
+.\scripts\llama-rpc\start-distributed-llama-server-windows.ps1 `
+  -LlamaCppDirectory 'C:\AI\llama.cpp-b11146' `
+  -ModelPath 'C:\AI\Qwen3.8-Flash-Next-IQ4_XS\UD-IQ4_XS\Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf' `
+  -RpcServers 'WORKER_ADDRESS:50052' `
+  -ContextSize 262144
+```
+
+Use automatic fitting for the first load. Record each device's dedicated and
+host-memory allocation before setting an explicit tensor split or GPU-layer
+count; Qwen3.8's large n-gram table makes a layer-count estimate unreliable.
+
 ## Recommended first model
 
 Start with
@@ -233,9 +292,9 @@ accepts explicit parameters:
 Use `-Local` for a Windows-only comparison run, `-Mtp` and `-MtpBlocks` for MTP
 speculative decoding, and `-TensorSplit` or `-FitTarget` for placement. When
 neither `-ModelPath` nor `-HuggingFaceRepository` is set, an interactive launch
-lists GGUF files found under `~\.lmstudio\models`, `~\.ollama\models`, the
-Hugging Face hub cache, and `<LlamaCppDirectory>\models`, then offers the
-recommended download.
+lists GGUF files found in LM Studio's configured `downloadsFolder`,
+`~\.lmstudio\models`, `~\.ollama\models`, the Hugging Face hub cache, and
+`<LlamaCppDirectory>\models`, then offers the recommended download.
 
 Two differences from the Mac launcher are intentional. The local alias is
 `windows-local` rather than `mac-local`, and the reserved local fit target

@@ -2,8 +2,21 @@ $script:RecommendedHuggingFaceRepository = 'bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:
 
 function Get-LlamaModelSearchDirectory {
     param(
-        [string]$LlamaCppDirectory
+        [string]$LlamaCppDirectory,
+        [string]$HomeDirectory = $HOME
     )
+
+    $lmStudioDownloadsDirectory = ''
+    $lmStudioSettingsPath = Join-Path $HomeDirectory '.lmstudio\settings.json'
+    if (Test-Path -LiteralPath $lmStudioSettingsPath) {
+        try {
+            $lmStudioSettings = Get-Content -LiteralPath $lmStudioSettingsPath -Raw | ConvertFrom-Json
+            $lmStudioDownloadsDirectory = $lmStudioSettings.downloadsFolder
+        }
+        catch {
+            Write-Warning "Could not read LM Studio settings from ${lmStudioSettingsPath}: $($_.Exception.Message)"
+        }
+    }
 
     $huggingFaceCacheDirectory = $env:HF_HUB_CACHE
     if (-not $huggingFaceCacheDirectory) {
@@ -16,11 +29,12 @@ function Get-LlamaModelSearchDirectory {
     }
 
     return @(
-        (Join-Path $HOME '.lmstudio\models')
-        (Join-Path $HOME '.ollama\models')
+        $lmStudioDownloadsDirectory
+        (Join-Path $HomeDirectory '.lmstudio\models')
+        (Join-Path $HomeDirectory '.ollama\models')
         $huggingFaceCacheDirectory
         (Join-Path $LlamaCppDirectory 'models')
-    )
+    ) | Where-Object { $_ } | Select-Object -Unique
 }
 
 function Resolve-LlamaModelSelection {

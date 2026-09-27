@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -15,6 +16,7 @@ LAUNCHER_PATH = (
     / "llama-rpc"
     / "start-distributed-llama-server-windows.ps1"
 )
+MODEL_SELECTOR_PATH = LAUNCHER_PATH.with_name("select-llama-model-windows.ps1")
 
 POWERSHELL_PATH = shutil.which("pwsh") or shutil.which("powershell")
 
@@ -138,6 +140,35 @@ def test_tensor_split_disables_automatic_fit(tmp_path: Path) -> None:
     assert "--fit\noff\n" in result.stdout
     assert "--tensor-split\n1,1,1.1\n" in result.stdout
     assert "--fit-target\n" not in result.stdout
+
+
+def test_model_search_includes_lm_studio_configured_downloads_folder(
+    tmp_path: Path,
+) -> None:
+    configured_models_directory = tmp_path / "lm-studio-models"
+    settings_directory = tmp_path / ".lmstudio"
+    settings_directory.mkdir()
+    (settings_directory / "settings.json").write_text(
+        json.dumps({"downloadsFolder": str(configured_models_directory)})
+    )
+
+    assert POWERSHELL_PATH is not None
+    command = (
+        f". '{MODEL_SELECTOR_PATH}'; "
+        "Get-LlamaModelSearchDirectory "
+        f"-LlamaCppDirectory '{tmp_path / 'llama.cpp'}' "
+        f"-HomeDirectory '{tmp_path}'"
+    )
+    result = subprocess.run(
+        [POWERSHELL_PATH, "-NoProfile", "-Command", command],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert str(configured_models_directory) in result.stdout.splitlines()
 
 
 @pytest.mark.parametrize(
