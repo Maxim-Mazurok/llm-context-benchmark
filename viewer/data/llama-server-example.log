@@ -1,19 +1,19 @@
-max@mbp llm-context-benchmark % LLAMA_TENSOR_SPLIT='0.4,1' LLAMA_CONTEXT_SIZE=262144 LLAMA_RPC_SERVERS='169.254.185.10:50052' \
+user@host llm-context-benchmark % LLAMA_TENSOR_SPLIT='0.4,1' LLAMA_CONTEXT_SIZE=262144 LLAMA_RPC_SERVERS='WORKER_IP:50052' \
 ./scripts/llama-rpc/start-distributed-llama-server-macos.sh
 Select a llama.cpp model:
-1) /Users/max/.cache/huggingface/hub/models--bartowski--Qwen_Qwen3.6-35B-A3B-GGUF/snapshots/5c2410d71524f4f72b023ce8daf7a80528226d5f/Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf
-2) /Users/max/.cache/huggingface/hub/models--unsloth--bge-small-en-v1.5-GGUF/snapshots/395309658a295cc893b3aa279136ce84f472fc62/bge-small-en-v1.5-f16.gguf
-3) /Users/max/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-GGUF/snapshots/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q6_K_XL.gguf
-4) /Users/max/.lmstudio/models/google/gemma-4-12B-it-qat-q4_0-gguf/gemma-4-12b-it-qat-q4_0.gguf
-5) /Users/max/.lmstudio/models/google/gemma-4-12B-it-qat-q4_0-gguf/mmproj-gemma-4-12b-it-qat-q4_0.gguf
-6) /Users/max/.lmstudio/models/OBLITERATUS/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-Q4_K_M.gguf
+1) /models/Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf
+2) /models/bge-small-en-v1.5-f16.gguf
+3) /models/Qwen3.8-27B-UD-Q6_K_XL.gguf
+4) /models/gemma-4-12b-it-qat-q4_0.gguf
+5) /models/mmproj-gemma-4-12b-it-qat-q4_0.gguf
+6) /models/Qwen3.8-27B-OBLITERATED-Q4_K_M.gguf
 7) Download recommended: bartowski/Qwen_Qwen3.6-35B-A3B-GGUF:Q4_K_M
 Model number: 1
 Using RPC-first tensor split 0.4,1; monitor dedicated and shared GPU memory.
 0.00.000.111 I srv  llama_server: initializing ...
 0.00.050.617 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
 0.00.050.912 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
-0.00.052.258 I srv    load_model: loading model '/Users/max/.cache/huggingface/hub/models--bartowski--Qwen_Qwen3.6-35B-A3B-GGUF/snapshots/5c2410d71524f4f72b023ce8daf7a80528226d5f/Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf'
+0.00.052.258 I srv    load_model: loading model '/models/Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf'
 0.00.211.616 W model has unused tensor blk.40.attn_norm.weight (size = 8192 bytes) -- ignoring
 0.00.211.621 W model has unused tensor blk.40.post_attention_norm.weight (size = 8192 bytes) -- ignoring
 0.00.211.626 W model has unused tensor blk.40.attn_q.weight (size = 17825792 bytes) -- ignoring

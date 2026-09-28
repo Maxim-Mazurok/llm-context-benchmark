@@ -115,13 +115,17 @@ h1 {
 .log-range button[aria-pressed="true"] { background: var(--ink); color: var(--sheet); }
 .log-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(2.5rem, 5vw, 5rem) clamp(1.5rem, 3vw, 3rem); }
 .log-chart { min-width: 0; container-type: inline-size; }
+.log-chart.wide { grid-column: 1 / -1; }
 .log-chart-heading { min-height: 5.6rem; border-top: 0.0625rem solid var(--rule); padding-top: 0.75rem; }
 .log-chart-heading h2 { margin: 0; font-size: clamp(1.4rem, 2.5vw, 2rem); letter-spacing: 0; }
 .log-chart-heading p { max-width: 45rem; margin: 0.2rem 0 0; color: var(--muted); font-size: 0.86rem; }
-.log-chart-frame { position: relative; height: clamp(22rem, 37vw, 34rem); border: 0.0625rem solid var(--rule); background-color: var(--sheet); background-image: linear-gradient(to right, color-mix(in oklch, var(--rule) 18%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in oklch, var(--rule) 18%, transparent) 1px, transparent 1px); background-size: 2rem 2rem; padding: clamp(0.6rem, 1.5vw, 1.2rem); }
+.log-chart-frame { position: relative; height: clamp(22rem, 37vw, 34rem); overflow: hidden; border: 0.0625rem solid var(--rule); background-color: var(--sheet); background-image: linear-gradient(to right, color-mix(in oklch, var(--rule) 18%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in oklch, var(--rule) 18%, transparent) 1px, transparent 1px); background-size: 2rem 2rem; padding: clamp(0.6rem, 1.5vw, 1.2rem); }
+.log-chart-frame canvas { width: 100% !important; max-width: 100%; height: 100% !important; }
 .log-provenance { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; margin-top: clamp(3rem, 8vw, 7rem); border-top: 0.15rem solid var(--ink); padding-top: 1rem; color: var(--muted); font-size: 0.75rem; }
 .log-provenance strong { color: var(--ink); }
 .log-provenance code { grid-column: 1 / -1; overflow-wrap: anywhere; color: var(--muted); font-size: 0.7rem; }
+.strata-dashboard .log-header h1 { max-width: 12ch; }
+.strata-dashboard .log-chart.wide .log-chart-frame { height: clamp(25rem, 42vw, 38rem); }
 
 .workbench-shell { width: min(96rem, 100%); margin-inline: auto; padding: clamp(1rem, 3vw, 3rem); }
 .workbench-nav { display: flex; justify-content: space-between; gap: 1rem; padding-bottom: 0.8rem; border-bottom: 0.0625rem solid var(--ink); color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
@@ -425,6 +429,7 @@ input[type="text"], .search-field input, select {
   .log-facts { grid-template-columns: repeat(3, 1fr); }
   .log-facts div:nth-child(4) { border-left: 0; }
   .log-chart-grid { grid-template-columns: 1fr; }
+  .log-chart.wide { grid-column: 1; }
   .log-chart-frame { height: clamp(24rem, 58vw, 36rem); }
   .ledger-header { display: none; }
   .ledger-row { grid-template-columns: minmax(14rem, 1.5fr) repeat(2, 1fr); padding-right: 2.5rem; }

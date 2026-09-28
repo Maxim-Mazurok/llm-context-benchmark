@@ -8,6 +8,7 @@ import {
 import MetricChart, { chartColor } from "./MetricChart.jsx";
 import { InferenceWorkbench } from "./InferenceWorkbench.jsx";
 import { LlamaLogDashboard } from "./LlamaLogDashboard.jsx";
+import { StrataLogDashboard } from "./StrataLogDashboard.jsx";
 
 function formatNumber(value, digits = 0) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -223,7 +224,7 @@ function RunLedger({ benchmarks, modelBenchmarks, metrics, details, ensureDetail
         <div className="eyebrow">Local inference field notes</div>
         <h1>Context Atlas</h1>
         <p className="lede">See where local models slow down, consume memory, and begin to swap as their live context grows.</p>
-        <div className="masthead-links"><a className="workbench-link" href="#llama-log">Analyze captured llama log →</a><a className="workbench-link" href="#inference">Open document workbench →</a></div>
+        <div className="masthead-links"><a className="workbench-link" href="#strata-log">View Strata overnight run →</a><a className="workbench-link" href="#llama-log">Analyze captured llama log →</a><a className="workbench-link" href="#inference">Open document workbench →</a></div>
       </header>
       <RunnerPanel models={models} providers={providers} runner={runner} onRunnerChange={onRunnerChange} />
       <ModelComparison
@@ -341,7 +342,8 @@ function DetailView({ benchmark, benchmarks, modelBenchmarks, metrics, details, 
 }
 
 export default function App() {
-  const [view, setView] = useState(() => location.hash === "#inference" ? "inference" : location.hash === "#llama-log" ? "llama-log" : "benchmarks");
+  const viewFromHash = () => location.hash === "#inference" ? "inference" : location.hash === "#llama-log" ? "llama-log" : location.hash === "#strata-log" ? "strata-log" : "benchmarks";
+  const [view, setView] = useState(viewFromHash);
   const [benchmarks, setBenchmarks] = useState([]);
   const [modelBenchmarks, setModelBenchmarks] = useState([]);
   const [metrics, setMetrics] = useState({});
@@ -405,7 +407,7 @@ export default function App() {
   }, [refresh, selectedId, view]);
   useEffect(() => {
     const onHashChange = () => {
-      setView(location.hash === "#inference" ? "inference" : location.hash === "#llama-log" ? "llama-log" : "benchmarks");
+      setView(viewFromHash());
       setSelectedId(location.hash.startsWith("#run=") ? decodeURIComponent(location.hash.replace("#run=", "")) : null);
     };
     window.addEventListener("hashchange", onHashChange);
@@ -443,6 +445,7 @@ export default function App() {
 
   if (view === "inference") return <InferenceWorkbench />;
   if (view === "llama-log") return <LlamaLogDashboard />;
+  if (view === "strata-log") return <StrataLogDashboard />;
 
   if (error) {
     return <main className="page-shell"><div className="error-state"><h1>Benchmark data could not be loaded</h1><p>{error}</p><button onClick={refresh}>Try loading again</button></div></main>;

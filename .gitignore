@@ -1,6 +1,7 @@
 /.venv/
 /.runtime/
 /runs/
+/127.0.0.1/
 /*.log
 *.egg-info/
 __pycache__/

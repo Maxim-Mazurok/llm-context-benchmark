@@ -104,6 +104,14 @@ RPC has no authentication or encryption and must remain on a trusted private
 network. The HTTP benchmark records Mac host memory; remote GPU telemetry is not
 yet collected.
 
+## Strata on Windows
+
+For Qwen3.8 Flash Next on an 8 GB NVIDIA GPU, the repository includes a guarded
+detached launcher, a native-log speed probe, and measured tuning guidance for
+Strata v0.1.14. The tested 131K configuration uses adaptive prefill, Q4_0 KV, MTP,
+and a pageable host expert arena. See
+[Fast Qwen3.8 Flash Next with Strata on Windows](docs/strata-qwen-flash-windows.md).
+
 The worker uses raw autoregressive MLX-LM generation without speculative
 decoding. It sets the MLX wired-memory limit to zero before and after model
 loading so macOS may compress or swap allocations under memory pressure.

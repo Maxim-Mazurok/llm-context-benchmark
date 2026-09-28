@@ -1,0 +1,5 @@
+{"time":1790521851,"duration_s":253.8,"finish":"stop","prompt_tokens":10185,"reused":0,"output_tokens":113,"prompt_ms":248912,"decode_ms":4839,"prefill_tok_s":40.9,"decode_tok_s":23.3}
+{"time":1790532651,"duration_s":53.7,"finish":"stop","prompt_tokens":21818,"reused":19933,"output_tokens":262,"prompt_ms":42309,"decode_ms":11419,"prefill_tok_s":44.6,"decode_tok_s":22.9}
+{"time":1790543451,"duration_s":414.1,"finish":"stop","prompt_tokens":44151,"reused":30622,"output_tokens":1518,"prompt_ms":334825,"decode_ms":79251,"prefill_tok_s":40.4,"decode_tok_s":19.2}
+{"time":1790554251,"duration_s":138.7,"finish":"stop","prompt_tokens":61315,"reused":57126,"output_tokens":743,"prompt_ms":101687,"decode_ms":37053,"prefill_tok_s":41.2,"decode_tok_s":20.1}
+{"time":1790565051,"duration_s":14.3,"finish":"stop","prompt_tokens":71771,"reused":71752,"output_tokens":255,"prompt_ms":684,"decode_ms":13568,"prefill_tok_s":27.8,"decode_tok_s":18.8}

@@ -16,6 +16,7 @@ export const fetchUnslothBenchmarkModels = () => request("/api/benchmark/provide
 export const fetchInferenceProviders = () => request("/api/inference/providers");
 export const fetchRunner = () => request("/api/runner");
 export const fetchLlamaLog = () => request("/api/llama-log");
+export const fetchStrataLog = () => request("/api/strata-log");
 
 export function uploadInferenceDocument(file, onProgress) {
   return new Promise((resolve, reject) => {

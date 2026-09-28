@@ -13,6 +13,7 @@ import express from "express";
 
 import { buildModelBenchmarks, getBenchmark, listBenchmarks, METRICS } from "./data.mjs";
 import { parseLlamaServerLog } from "./llama-log-parser.mjs";
+import { parseStrataMetrics } from "./strata-log-parser.mjs";
 import { RunManager } from "./run-manager.mjs";
 import {
   defaultUnslothEndpoint,
@@ -32,6 +33,7 @@ const runsDir = path.resolve(process.env.BENCHMARK_RUNS_DIR || path.join(project
 const launcher = path.join(projectRoot, "bin", "llm-context-bench");
 const inferenceLauncher = path.join(projectRoot, "bin", "llm-context-infer");
 const llamaLogPath = path.join(viewerRoot, "data", "llama-server-example.log");
+const strataMetricsPath = path.resolve(process.env.STRATA_METRICS_PATH || path.join(viewerRoot, "data", "strata-metrics-example.jsonl"));
 const uploadDirectory = path.join(os.tmpdir(), "llm-context-benchmark-uploads");
 const omlxModelsDirectory = path.join(os.homedir(), ".omlx", "models");
 const omlxApplicationPath = process.env.OMLX_APP_PATH || "/Applications/oMLX.app";
@@ -59,6 +61,25 @@ app.get("/api/llama-log", async (_request, response, next) => {
       ...parseLlamaServerLog(content),
       source: {
         name: path.basename(llamaLogPath),
+        bytes: logStats.size,
+        modifiedAt: logStats.mtime.toISOString(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/strata-log", async (_request, response, next) => {
+  try {
+    const [content, logStats] = await Promise.all([
+      readFile(strataMetricsPath, "utf8"),
+      stat(strataMetricsPath),
+    ]);
+    response.json({
+      ...parseStrataMetrics(content),
+      source: {
+        name: path.basename(strataMetricsPath),
         bytes: logStats.size,
         modifiedAt: logStats.mtime.toISOString(),
       },

@@ -284,7 +284,7 @@ accepts explicit parameters:
 
 ```powershell
 .\scripts\llama-rpc\start-distributed-llama-server-windows.ps1 `
-  -RpcServers '169.254.117.5:50052' `
+  -RpcServers 'MAC_THUNDERBOLT_ADDRESS:50052' `
   -ContextSize 65536 `
   -ServerPort 8081
 ```
@@ -477,10 +477,11 @@ not by itself make RPC use the cable: both peer adapters need IPv4 addresses,
 the Windows network profile and firewall must admit RPC, and the Mac launcher
 must use the Windows USB4 address.
 
-The tested pair assigned link-local addresses automatically:
+The tested pair assigned link-local `/16` addresses automatically. Record the
+values reported on your machines; they are represented below by placeholders:
 
-- Mac Thunderbolt Bridge: `169.254.117.5/16`
-- Windows USB4 P2P Network Adapter: `169.254.185.10/16`
+- Mac Thunderbolt Bridge: `MAC_USB4_ADDRESS/16`
+- Windows USB4 P2P Network Adapter: `WINDOWS_USB4_ADDRESS/16`
 
 Find the current Windows values in Administrator PowerShell:
 
@@ -511,15 +512,15 @@ Private profile and that the worker listens on `0.0.0.0:50052`.
 On the Mac, verify the direct endpoint and route:
 
 ```bash
-nc -vz 169.254.185.10 50052
-route -n get 169.254.185.10
+nc -vz WINDOWS_USB4_ADDRESS 50052
+route -n get WINDOWS_USB4_ADDRESS
 ```
 
 The route must show `interface: bridge0`. Start the server with the direct
 address to bypass Wi-Fi discovery:
 
 ```bash
-LLAMA_RPC_SERVERS='169.254.185.10:50052' \
+LLAMA_RPC_SERVERS='WINDOWS_USB4_ADDRESS:50052' \
   ./scripts/llama-rpc/start-distributed-llama-server-macos.sh
 ```
 
