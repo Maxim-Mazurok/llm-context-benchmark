@@ -122,6 +122,20 @@ explicit VRAM reserve. It creates an untracked `runs/strata-TIMESTAMP` directory
 waits for the actual engine child, starts the watchdog, and returns only after
 `/health` succeeds. It does not replace an existing listener.
 
+To launch without automatic RAM-pressure termination, add the explicit switch:
+
+```powershell
+.\scripts\start-strata-fast.ps1 `
+  -StrataRoot 'C:\path\to\Strata' `
+  -ConfigPath 'C:\path\to\Strata\strata-iq3_xxs.json' `
+  -DisableMemoryWatchdog
+```
+
+Telemetry and `STRATA_ARENA_REGISTER=0` remain enabled. The run's `launch.json`
+records `memory_watchdog_enabled: false`, a null watchdog PID, and null inactive
+thresholds. Without the watchdog, Windows may become unresponsive or page heavily
+under host-memory pressure; monitor the system and stop Strata manually if needed.
+
 Check the endpoint directly:
 
 ```powershell

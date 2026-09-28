@@ -6,7 +6,8 @@ param(
     [ValidateRange(1, 99)][int]$MaximumMemoryLoadPercent=95,
     [ValidateRange(0.5, 1024)][double]$MinimumAvailableRamGiB=3,
     [ValidateRange(30, 1800)][int]$LoadTimeoutSeconds=600,
-    [string]$PythonExecutable
+    [string]$PythonExecutable,
+    [switch]$DisableMemoryWatchdog
 )
 
 $ErrorActionPreference='Stop'
@@ -89,23 +90,29 @@ if (-not $engine) {
     throw "Timed out waiting for strata.exe; see $stderr"
 }
 
-$watchdog=Start-Process -FilePath $python -ArgumentList @(
-    "`"$(Join-Path $PSScriptRoot 'windows-memory-watchdog.py')`"",'--pid',"$($engine.ProcessId)",
-    '--run-directory',"`"$($run.FullName)`"",'--minimum-available-gib',"$MinimumAvailableRamGiB",
-    '--maximum-memory-load',"$MaximumMemoryLoadPercent",'--interval','0.5') `
-    -WindowStyle Hidden -RedirectStandardOutput (Join-Path $run.FullName 'memory-watchdog.stdout.log') `
-    -RedirectStandardError (Join-Path $run.FullName 'memory-watchdog.stderr.log') -PassThru
+$watchdog=$null
+if (-not $DisableMemoryWatchdog) {
+    $watchdog=Start-Process -FilePath $python -ArgumentList @(
+        "`"$(Join-Path $PSScriptRoot 'windows-memory-watchdog.py')`"",'--pid',"$($engine.ProcessId)",
+        '--run-directory',"`"$($run.FullName)`"",'--minimum-available-gib',"$MinimumAvailableRamGiB",
+        '--maximum-memory-load',"$MaximumMemoryLoadPercent",'--interval','0.5') `
+        -WindowStyle Hidden -RedirectStandardOutput (Join-Path $run.FullName 'memory-watchdog.stdout.log') `
+        -RedirectStandardError (Join-Path $run.FullName 'memory-watchdog.stderr.log') -PassThru
+} else {
+    Write-Warning 'RAM protection is disabled; Strata will not be stopped automatically under memory pressure.'
+}
 
 $record=[ordered]@{
     started_utc=[DateTime]::UtcNow.ToString('o')
     launcher_pid=$launcher.Id
     engine_pid=$engine.ProcessId
-    watchdog_pid=$watchdog.Id
+    memory_watchdog_enabled=(-not $DisableMemoryWatchdog)
+    watchdog_pid=if ($watchdog) { $watchdog.Id } else { $null }
     config=$config
     port=$Port
     strata_arena_register='0'
-    maximum_memory_load_percent=$MaximumMemoryLoadPercent
-    minimum_available_ram_gib=$MinimumAvailableRamGiB
+    maximum_memory_load_percent=if ($DisableMemoryWatchdog) { $null } else { $MaximumMemoryLoadPercent }
+    minimum_available_ram_gib=if ($DisableMemoryWatchdog) { $null } else { $MinimumAvailableRamGiB }
     stdout=$stdout
     stderr=$stderr
 }
