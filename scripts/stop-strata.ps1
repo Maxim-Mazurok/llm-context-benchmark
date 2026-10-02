@@ -15,7 +15,7 @@ if (-not $listener) {
 
 $processes=@(Get-CimInstance Win32_Process)
 $server=$processes | Where-Object ProcessId -eq $listener.OwningProcess
-if ([string]::IndexOf($server.CommandLine,$serverPath,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+if ($server.CommandLine.IndexOf($serverPath,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
     throw "Refusing to stop unexpected port $Port owner PID $($listener.OwningProcess): $($server.CommandLine)"
 }
 
@@ -25,13 +25,13 @@ do {
     $children=$processes | Where-Object {
         $_.ParentProcessId -in $processIds -and
         ($_.Name -eq 'strata.exe' -or
-            [string]::IndexOf($_.CommandLine,$root,[StringComparison]::OrdinalIgnoreCase) -ge 0)
+            $_.CommandLine.IndexOf($root,[StringComparison]::OrdinalIgnoreCase) -ge 0)
     } | Select-Object -ExpandProperty ProcessId
     $processIds=@($processIds + $children | Select-Object -Unique)
 } while ($processIds.Count -gt $before)
 
 $parent=$processes | Where-Object ProcessId -eq $server.ParentProcessId
-if ($parent -and [string]::IndexOf($parent.CommandLine,$root,[StringComparison]::OrdinalIgnoreCase) -ge 0) {
+if ($parent -and $parent.CommandLine.IndexOf($root,[StringComparison]::OrdinalIgnoreCase) -ge 0) {
     $processIds=@($processIds + $parent.ProcessId | Select-Object -Unique)
 }
 

@@ -12,7 +12,7 @@ prompts, telemetry, and run directories remain local and must not be committed.
 - 64 GiB system RAM
 - Qwen3.8 Flash Next IQ3_XXS native expert pack
 - Strata v0.1.14
-- 131,072-token context with Q4_0 KV
+- 262,144-token context with Q4_0 KV and 32,768 resident cells per QSA layer
 - MTP speculation: four drafts, minimum probability 0.5
 
 These settings are a measured reference, not universal defaults. Larger GPUs may lend
@@ -49,6 +49,24 @@ show the intended outcome: much faster cold prefill without sacrificing sustaine
 decode. Normal observed decode across longer agent sessions was about 18-24 tokens/s.
 Prefix-reused requests can report low rates for a tiny newly read suffix because fixed
 request overhead dominates; keep reused and read token counts when interpreting logs.
+
+The model's full context capacity is 262,144 tokens. Upstream identifies 259,943 as
+the full usable prompt shape; the remaining capacity accommodates generation and
+server overhead. A controlled prefix-growing test reached that prompt length on the
+reference laptop:
+
+| Prompt tokens | Reused | Fresh prefill | Decode | Total time |
+|---:|---:|---:|---:|---:|
+| 32,768 | 0 | 333.8 tok/s | 24.1 tok/s | 108.8 s |
+| 131,072 | 16,384 | 315.9 tok/s | 21.4 tok/s | 375.1 s |
+| **259,943** | **114,688** | **264.0 tok/s** | **20.9 tok/s** | **562.5 s** |
+
+At the maximum prompt, fresh-prefill speed was 21% below the 32K point and decode was
+13% lower. There was no decode collapse. Q4 KV streaming kept 96.23% of block reads
+in VRAM and read 890.2 MiB from RAM. After completion, the engine had a 41.59 GiB
+working set, the system had 8.12 GiB physical RAM free at 87.2% memory load, and the
+GPU had 1,216 MiB VRAM free. This fits, but the RAM margin is narrow enough that the
+memory watchdog remains strongly recommended.
 
 ## Install or update
 
@@ -90,8 +108,9 @@ core configuration:
   "--prefill", "auto",
   "--spec", "4",
   "--spec-min-p", "0.5",
-  "--max-context", "131072",
-  "--kv", "q4_0"
+  "--max-context", "262144",
+  "--kv", "q4_0",
+  "--kv-resident", "32768"
 ]
 ```
 
@@ -99,6 +118,14 @@ The 700 MiB reserve is the tested 8 GB value. A 1,280 MiB reserve left no expert
 on this system and server mode refused to start. Do not reduce the reserve merely to
 force a larger chunk: leave `--prefill auto` in control and retain headroom for MTP,
 the verifier, display use, and transient allocations.
+
+The 262K configuration stores the complete Q4 K/V cache in about 1.69 GiB of pinned
+host RAM while limiting each QSA layer to 32,768 resident GPU cells. On this system,
+automatic prefill selected a 512-token chunk, borrowed 336 expert-cache slots for its
+0.55 GiB workspace, and started with 512 expert slots. Strata setup may conservatively
+clamp IQ3_XXS to 131K on systems below 90 GiB RAM; that is a setup heuristic rather
+than an engine limit. Keep 131K when other memory-heavy applications must run beside
+Strata.
 
 Set `STRATA_ARENA_REGISTER=0`. Registering the approximately 40 GiB host expert arena
 with CUDA consumed VRAM needed by MTP on the reference machine. The launcher below
