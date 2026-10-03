@@ -235,7 +235,10 @@ From this repository on Windows PowerShell:
 The launcher refuses configs without `--prefill auto`, `--expert-cache auto`, or an
 explicit VRAM reserve. It creates an untracked `runs/strata-TIMESTAMP` directory,
 waits for the actual engine child, starts the watchdog, and returns only after
-`/health` succeeds. It does not replace an existing listener.
+`/health` succeeds. It does not replace an existing listener. When the port is already
+healthy, it returns success only after verifying the server and config paths, engine
+executable and version, model, context limit, and watchdog. A stale or differently
+configured service must be stopped explicitly before launching the requested setup.
 
 To launch without automatic RAM-pressure termination, add the explicit switch:
 

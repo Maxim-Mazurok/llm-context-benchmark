@@ -18,20 +18,62 @@ if (-not $PythonExecutable) { $PythonExecutable=Join-Path $root '.venv\Scripts\p
 $python=(Resolve-Path -LiteralPath $PythonExecutable).Path
 $server=(Resolve-Path -LiteralPath (Join-Path $root 'serve\server.py')).Path
 
-$listener=Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-if ($listener) {
-    $health=Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 5
-    Write-Output "Strata is already healthy on port $Port (PID $($listener.OwningProcess), model $($health.model))."
-    exit 0
-}
-
 $settings=Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
 $engineArgs=@($settings.args)
 function Get-EngineArgument([string]$Name) {
     $index=[Array]::IndexOf($engineArgs, $Name)
     if ($index -lt 0 -or $index + 1 -ge $engineArgs.Count) { return $null }
     return $engineArgs[$index + 1]
+}
+
+$listener=Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($listener) {
+    $health=Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 5
+    $status=Invoke-RestMethod -Uri "http://127.0.0.1:$Port/v1/status" -TimeoutSec 5
+    $processes=@(Get-CimInstance Win32_Process)
+    $serverProcess=$processes | Where-Object ProcessId -eq $listener.OwningProcess
+    if (-not $serverProcess -or
+        $serverProcess.CommandLine.IndexOf($server,[StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+        $serverProcess.CommandLine.IndexOf($config,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Port $Port is healthy but is not using server $server with config $config."
+    }
+
+    $descendants=@($serverProcess.ProcessId)
+    do {
+        $before=$descendants.Count
+        $children=$processes | Where-Object { $_.ParentProcessId -in $descendants } |
+            Select-Object -ExpandProperty ProcessId
+        $descendants=@($descendants + $children | Select-Object -Unique)
+    } while ($descendants.Count -gt $before)
+
+    $expectedEngine=(Resolve-Path -LiteralPath $settings.exe).Path
+    $engine=$processes | Where-Object {
+        $_.Name -eq 'strata.exe' -and $_.ProcessId -in $descendants -and
+        $_.ExecutablePath -and $_.ExecutablePath.Equals($expectedEngine,[StringComparison]::OrdinalIgnoreCase)
+    } | Select-Object -First 1
+    if (-not $engine) { throw "The healthy Strata server is not using engine $expectedEngine." }
+
+    $buildPath=Join-Path (Split-Path -Parent $expectedEngine) 'BUILD.json'
+    $expectedVersion=(Get-Content -LiteralPath $buildPath -Raw | ConvertFrom-Json).version
+    $expectedContext=[int](Get-EngineArgument '--max-context')
+    if (-not $status.loaded -or $status.engine -ne $expectedVersion -or
+        [int]$status.context.native -ne $expectedContext -or $health.model -ne $settings.model_name) {
+        throw "The healthy Strata service does not match engine $expectedVersion, context $expectedContext, model $($settings.model_name)."
+    }
+
+    if (-not $DisableMemoryWatchdog) {
+        $watchdogPath=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'windows-memory-watchdog.py')).Path
+        $watchdog=$processes | Where-Object {
+            $_.CommandLine -and
+            $_.CommandLine.IndexOf($watchdogPath,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $_.CommandLine -match "--pid\s+$($engine.ProcessId)(?:\s|$)"
+        } | Select-Object -First 1
+        if (-not $watchdog) { throw "Strata is healthy but engine PID $($engine.ProcessId) has no RAM watchdog." }
+    }
+
+    Write-Output "Strata is already healthy and matches the supported config on port $Port (engine PID $($engine.ProcessId), version $expectedVersion, model $($health.model))."
+    exit 0
 }
 
 if ((Get-EngineArgument '--prefill') -ne 'auto') {
