@@ -202,6 +202,21 @@ subset reduces the draft head from 180 MiB to 68 MiB on this model and is 1-2% f
 for English according to upstream. Use the larger default subset when CJK generation
 speed matters.
 
+Persist the adaptive expert ranking outside the Git worktree:
+
+```json
+{
+  "expert_profile_save": "C:\\AI\\Strata-state\\iq3_xxs-expert-profile.bin",
+  "expert_profile_save_every": 5
+}
+```
+
+The engine starts from the configured base `--expert-profile` until the learned file
+exists and has matching model geometry. It then starts from the learned ranking and
+continues updating it. The save occurs between requests at most once per interval and
+on a graceful engine quit, never midway through a borrowed prefill workspace. Keep the
+base profile unchanged as the rollback.
+
 The 590 MiB reserve is the end-to-end tested value for this exact 8 GB system. It is
 the smallest relaxation that crosses the 512-token workspace threshold while retaining
 287 MiB of engine-reported headroom. Leave `--prefill auto` in control. A different
@@ -304,6 +319,14 @@ machine paths, local addresses, or the full private run history.
 For controlled comparisons, keep model files, context limit, KV type, MTP settings,
 prompt token IDs, generated-token count, expert-cache state, and background GPU load
 fixed. Report cold and warm prompts separately.
+
+To evaluate expert-cache policy, train a candidate profile on representative agent
+sessions, then freeze it and compare it with the shipped profile on held-out prompts.
+Do not evaluate on the same requests that trained it. Record fresh-prefill throughput,
+decode throughput, wall time, cache hit rate, expert fallback, and profile identity.
+Useful isolated A/B controls are static residency (`--adapt-swaps 0`), adaptation
+interval, swap count, decay, and `--expert-cache-per-layer`. Reset to the same profile
+before every run; online adaptation otherwise makes sequential results order-dependent.
 
 ## Troubleshooting
 
